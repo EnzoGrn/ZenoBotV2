@@ -164,7 +164,7 @@ Les pull requests et les autres branches ne sont que testées.
    ```bash
    echo "ADRESSE_DU_VPS $(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
    ```
-   Utiliser la même adresse que `VPS_HOST`. Pour un port autre que 22 : `[ADRESSE_DU_VPS]:PORT`.
+   Utiliser la même adresse que `VPS_HOST`. La clé seule (`ssh-ed25519 AAAA...`, sans adresse) est aussi acceptée : le workflow y ajoute `VPS_HOST` et `VPS_PORT`. Avec une ligne complète sur un port autre que 22, écrire `[ADRESSE_DU_VPS]:PORT`.
 5. **Secrets** (*Settings → Secrets and variables → Actions*) :
 
    | Secret | Valeur |

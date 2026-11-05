@@ -81,7 +81,20 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          printf '%s\n' "$VPS_HOST_KEY" > ~/.ssh/known_hosts
+          # VPS_HOST_KEY : ligne complète « ADRESSE ssh-ed25519 AAAA... », ou seulement « ssh-ed25519 AAAA... »
+          case "$VPS_HOST_KEY" in
+            ssh-*|ecdsa-*)
+              if [ "${VPS_PORT:-22}" = "22" ]; then prefix="$VPS_HOST"; else prefix="[${VPS_HOST}]:${VPS_PORT}"; fi
+              printf '%s %s\n' "$prefix" "$VPS_HOST_KEY" > ~/.ssh/known_hosts ;;
+            *)
+              printf '%s\n' "$VPS_HOST_KEY" > ~/.ssh/known_hosts ;;
+          esac
+          if ! ssh-keygen -lf ~/.ssh/known_hosts >/dev/null 2>&1; then
+            echo "::error::VPS_HOST_KEY est illisible : attendu « ADRESSE ssh-ed25519 AAAA... » ou « ssh-ed25519 AAAA... »."
+            exit 1
+          fi
+          echo "Empreinte du serveur attendue :"
+          ssh-keygen -lf ~/.ssh/known_hosts | awk '{print $2, $4}'
           cat > ~/.ssh/config <<EOF
           Host vps
             HostName ${VPS_HOST}
