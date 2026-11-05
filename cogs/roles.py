@@ -1,4 +1,4 @@
-"""Rôles à boutons : un clic pour prendre ou retirer un rôle (Notif live, jeux...)."""
+"""Rôles à boutons : un clic pour prendre ou retirer un rôle (jeux, plateformes...)."""
 from __future__ import annotations
 
 import logging

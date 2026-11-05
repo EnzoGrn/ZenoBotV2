@@ -273,12 +273,13 @@ class FakeMsg:
 class FakePartial:
     def __init__(self, chan, mid): self.chan, self.id = chan, mid
     async def edit(self, **kw): self.chan.edits.append((self.id, kw))
+    async def delete(self): self.chan.deleted.append(self.id)
 
 
 class FakeChannel(discord.TextChannel):
     def __init__(self, cid):
         self.id = cid
-        self.sent, self.edits = [], []
+        self.sent, self.edits, self.deleted = [], [], []
     @property
     def name(self): return "annonces"
     @property
@@ -332,10 +333,10 @@ async def test_twitch(tmp: Path):
     await cog._check_live()
     assert len(chan.sent) == 1
     _, content, kw = chan.sent[0]
-    assert "<@&5>" in content and "ZenoSurTwitch_" in content
+    assert content.startswith("@everyone") and "ZenoSurTwitch_" in content
     assert kw["embed"].title == "Découverte !" and kw["embed"].fields[0].value == "Hades"
     assert "1280x720" in kw["embed"].image.url
-    assert kw["allowed_mentions"].roles == [role]
+    assert kw["allowed_mentions"].everyone is True
     assert kw["view"].children[0].url == "https://twitch.tv/zenosurtwitch_"
     msg_id = chan.sent[0][0].id
     assert cog.state["stream_id"] == "S1" and cog.state["message_id"] == msg_id
@@ -377,23 +378,16 @@ async def test_twitch(tmp: Path):
     assert cog.state["stream_id"] == "S1" and len(chan.edits) == 1
     await cog._check_live()
     assert cog.state["stream_id"] is None
-    mid, kw = chan.edits[-1]
-    assert mid == msg_id and kw["content"] is None
-    end = kw["embed"]
-    assert "terminé" in end.title
-    fields = {f.name: f.value for f in end.fields}
-    assert "Hades, Celeste" in fields["🎮 Jeux"] and "1 h" in fields["⏱️ Durée"]
-    assert kw["view"].children[0].label == "Voir les rediffusions"
-    ok("fin de live : récapitulatif (durée, jeux), ping retiré")
+    assert chan.deleted == [msg_id] and len(chan.edits) == 1 and cog.state["message_id"] is None
+    ok("fin de live : l'annonce (et son ping) est supprimée")
 
-    # --- reprise rapide (nouvelle session) : même message, pas de nouveau ping
+    # --- reprise rapide (nouvelle session) : nouveau message, sans ping
     fake.stream = {**stream, "id": "S2"}
     await cog._check_live()
-    assert len(chan.sent) == 1
-    mid, kw = chan.edits[-1]
-    assert mid == msg_id and "de retour" in kw["content"] and "<@&5>" not in kw["content"]
-    assert kw["allowed_mentions"].roles is False or not kw["allowed_mentions"].roles
-    ok("reprise rapide : annonce réutilisée, pas de re-ping")
+    assert len(chan.sent) == 2
+    _, content, kw = chan.sent[-1]
+    assert "de retour" in content and "@everyone" not in content and not kw["allowed_mentions"].everyone
+    ok("reprise rapide : nouvelle annonce sans ping")
 
     # --- nouveau live bien plus tard : nouvelle annonce avec ping
     fake.stream = None
@@ -402,14 +396,14 @@ async def test_twitch(tmp: Path):
     cog.state["last_end"] = (utils.utcnow() - timedelta(hours=3)).isoformat()
     fake.stream = {**stream, "id": "S3", "game_name": "Hades"}
     await cog._check_live()
-    assert len(chan.sent) == 2 and "<@&5>" in chan.sent[1][1]
+    assert len(chan.sent) == 3 and "@everyone" in chan.sent[2][1] and chan.deleted == [msg_id, chan.sent[1][0].id]
     assert cog.state["games"] == ["Hades"]
     ok("nouveau live plus tard : nouvelle annonce + ping")
 
     # --- session qui change sans passage hors-ligne détecté
     fake.stream = {**stream, "id": "S4"}
     await cog._check_live()
-    assert cog.state["stream_id"] == "S4" and len(chan.sent) in (2, 3)
+    assert cog.state["stream_id"] == "S4" and len(chan.sent) in (3, 4)
     ok("changement d'identifiant de live géré")
 
     # --- annonce sans salon configuré : aucune erreur, annonce faite une fois le salon réglé
@@ -633,11 +627,12 @@ async def test_extras(tmp: Path):
     # niveaux : gain d'XP, cooldown, message court, récompense
     cfg.XP_MIN = cfg.XP_MAX = 100
     lv = levels.Levels(bot)
-    role = SimpleNamespace(id=900, is_assignable=lambda: True)
+    role = SimpleNamespace(id=900, name="Débutant", is_assignable=lambda: True)
     guild = SimpleNamespace(get_role=lambda rid: role if rid == 900 else None)
     mem = FakeMember(20); mem.guild = guild; mem.added = []
     async def add_roles(r, reason=None): mem._roles.append(r); mem.added.append(r)
-    mem.add_roles = add_roles
+    async def remove_roles(r, reason=None): mem._roles.remove(r)
+    mem.add_roles, mem.remove_roles = add_roles, remove_roles
     await bot.db.set_reward(1, 900)
     ch = FakeTextChannel()
     await lv.award_xp(FakeMessage(mem, "ok", ch))                      # trop court
@@ -648,6 +643,31 @@ async def test_extras(tmp: Path):
     await lv.award_xp(FakeMessage(mem, "un autre message", ch))        # cooldown
     assert (await bot.db.get_xp(20))["xp"] == 100 and len(ch.sent) == 1
     ok("niveaux : XP, anti-abus (cooldown, messages courts), montée de niveau + rôle")
+
+    # échelle de rangs : un seul rang (remplacer), retrait si l'XP baisse, mode cumuler
+    assert [l for l, _, _ in cfg.LEVEL_LADDER] == [10, 20, 25, 30, 40, 50, 60, 70, 80, 90]
+    roles_by_id = {1000 + l: SimpleNamespace(id=1000 + l, name=n, is_assignable=lambda: True) for l, n, _ in cfg.LEVEL_LADDER}
+    lg = SimpleNamespace(get_role=lambda rid: roles_by_id.get(rid))
+    await bot.db.remove_reward(1)
+    for l, _, _ in cfg.LEVEL_LADDER:
+        await bot.db.set_reward(l, 1000 + l)
+    m = FakeMember(40); m.guild = lg
+    async def a2(r, reason=None): m._roles.append(r)
+    async def r2(r, reason=None): m._roles.remove(r)
+    m.add_roles, m.remove_roles = a2, r2
+    names = lambda: sorted(r.name for r in m._roles)
+    given, removed = await lv.sync_rewards(m, 9)
+    assert not given and names() == []                                   # nouveaux : rien
+    await lv.sync_rewards(m, 10);  assert names() == ["Débutant"]
+    await lv.sync_rewards(m, 24);  assert names() == ["Actif"]            # remplace Débutant
+    await lv.sync_rewards(m, 90);  assert names() == ["Boss final"]
+    given, removed = await lv.sync_rewards(m, 90); assert not given and not removed
+    await lv.sync_rewards(m, 31);  assert names() == ["Hyperactif"]       # XP retirée : rang abaissé
+    await lv.sync_rewards(m, 0);   assert names() == []
+    await bot.db.set_setting("levels.mode", "cumuler")
+    await lv.sync_rewards(m, 25);  assert names() == ["Actif", "Débutant", "Superactif"]
+    await bot.db.delete_setting("levels.mode")
+    ok("rangs : un seul à la fois, abaissement, rien avant le niveau 10, mode cumuler")
 
     # /xp réservé au staff, /niveau public
     cmd_xp, cmd_niv = SimpleNamespace(qualified_name="xp reset"), SimpleNamespace(qualified_name="niveau")

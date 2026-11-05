@@ -6,11 +6,11 @@ Bot Discord de la communauté ZenoSurTwitch_. Python 3.12, discord.py, SQLite, d
 
 | Fonction | Détail |
 |---|---|
-| Annonces de live | Embed (titre, jeu, miniature) et ping du rôle « Notif live » au lancement du stream. Mis à jour si le titre ou le jeu change, transformé en récapitulatif (durée, jeux) à la fin. Une reprise en moins de 10 min réutilise l'annonce, sans nouveau ping. |
+| Annonces de live | Embed (titre, jeu, miniature) et ping @everyone au lancement du stream. Mis à jour si le titre ou le jeu change, supprimé (ping compris) à la fin du live. Une reprise en moins de 10 min republie une annonce sans ping. Le bot doit avoir « Mentionner @everyone » et « Gérer les messages » dans le salon d'annonces. |
 | Accueil | Message de bienvenue personnalisable, rôle d'arrivée. Attend la validation des règles si le serveur en a une. |
 | Rôles à boutons | Message avec boutons pour prendre ou retirer des rôles. Boutons persistants. |
 | Modération | Filtre de liens par liste blanche, blocage des invitations, anti-spam, avertissements, exclusions, kick, ban, purge, salon de logs. |
-| Niveaux | XP au message (avec cooldown), classement, rôles débloqués par niveau. |
+| Niveaux | XP au message (avec cooldown), classement, échelle de rangs (un rôle par palier, le plus haut remplace le précédent). |
 | Communauté | Sondages natifs, idées avec votes et fil de discussion, annonces de recherche de joueurs. |
 
 ## Commandes
@@ -19,7 +19,7 @@ Droits par défaut, modifiables dans *Paramètres du serveur → Intégrations*.
 
 | Commande | Droit requis | Rôle |
 |---|---|---|
-| `/config salon` `role` `niveau-role` `message-bienvenue` `filtre-liens` `domaine` | Gérer le serveur | Réglages |
+| `/config salon` `role` `echelle` `niveau-role` `niveau-mode` `message-bienvenue` `filtre-liens` `domaine` | Gérer le serveur | Réglages |
 | `/config afficher` | Gérer le serveur | Configuration actuelle |
 | `/config verifier` | Gérer le serveur | Diagnostic : permissions, rôles, salons |
 | `/twitch statut` `test` | Gérer le serveur | État de la connexion Twitch, aperçu d'annonce |
@@ -29,7 +29,7 @@ Droits par défaut, modifiables dans *Paramètres du serveur → Intégrations*.
 | `/kick` `ban` `unban` | Expulser / Bannir | Sanctions |
 | `/purge` | Gérer les messages | Suppression de messages récents |
 | `/niveau` `top` | Tous | Niveau, classement |
-| `/xp ajouter` `reset` | Gérer le serveur | Correction d'XP |
+| `/xp ajouter` `reset` `synchroniser` | Gérer le serveur | Correction d'XP, resynchronisation des rangs |
 | `/sondage` | Gérer les messages | Sondage (2 à 5 choix) |
 | `/idee` | Tous | Proposer une idée |
 | `/idee-statut` | Gérer les messages | Statut d'une idée |
@@ -115,10 +115,10 @@ Les logs doivent contenir `commandes synchronisées` puis `Connecté en tant que
 ### 7. Réglages dans Discord
 
 1. `/config salon` : *Annonces de live*, puis facultativement *Bienvenue*, *Logs*, *Idées*, *Recherche de joueurs*, *Montées de niveau*.
-2. Rendre le rôle « Notif live » mentionnable (*Rôles → ce rôle → Autoriser tout le monde à mentionner ce rôle*), puis `/config role` → *Notif live*.
+2. Donner au bot, dans le salon d'annonces, les permissions « Mentionner @everyone, @here et tous les rôles » et « Gérer les messages » (`/config verifier` contrôle).
 3. `/config role` : *Rôle d'arrivée* et *Habitué* (autorisé à poster des liens).
 4. Rôles à boutons : `/roles ajouter` pour chaque rôle, puis `/roles panel`. Après une modification de la liste, supprimer l'ancien message et republier le panneau.
-5. Récompenses de niveau : `/config niveau-role niveau:5 role:@Habitué`.
+5. Rangs : `/config echelle` crée les 10 rôles (Débutant 10, Actif 20, Superactif 25, Hyperactif 30, No life 40, Reclus 50, Ermite 60, Empereur 70, Ambassadeur 80, Boss final 90). Placer ensuite ces rôles sous celui du bot, puis `/xp synchroniser`. Palier isolé : `/config niveau-role`. Garder tous les rangs au lieu du plus haut : `/config niveau-mode cumuler`.
 6. `/twitch test` (aperçu sans ping, supprimé après 60 s) et `/twitch statut`.
 7. `/config verifier` liste les problèmes restants. À relancer après chaque changement important.
 
@@ -240,7 +240,7 @@ Le dépôt contient tout, sauf `.env` et `data/`.
 | `PrivilegedIntentsRequired` | Activer *Server Members Intent* et *Message Content Intent* (étape 1.2). |
 | Commandes `/` absentes | Vérifier `GUILD_ID` et le scope `applications.commands` de l'invitation, recréer le conteneur, recharger Discord (`Ctrl+R`). |
 | Pas d'annonce de live | `/twitch statut` puis `/config verifier` : salon non défini ou permissions manquantes dans ce salon. |
-| Annonce sans notification | Rôle « Notif live » non mentionnable (étape 7.2). |
+| Annonce sans notification | Le bot n'a pas « Mentionner @everyone » dans le salon d'annonces (étape 7.2). |
 | Rôle non attribué | Le rôle du bot doit être au-dessus du rôle visé (étape 1.4). |
 | `Authentification Twitch refusée` | `TWITCH_CLIENT_ID` ou `TWITCH_CLIENT_SECRET` incorrect. |
 | `Chaîne Twitch introuvable` | `TWITCH_CHANNEL` incorrect. |

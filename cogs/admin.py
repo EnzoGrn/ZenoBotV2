@@ -9,6 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import config as cfg
 from utils import COLOR_INFO, truncate
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,6 @@ CHANNEL_LABELS = {
 }
 
 ROLE_LABELS = {
-    "notif_live": "Notif live (pingé à chaque live)",
     "auto": "Rôle d'arrivée (donné aux nouveaux)",
     "habitue": "Habitué (a le droit de poster des liens)",
     "joueurs": "Ping « recherche de joueurs »",
@@ -31,6 +31,7 @@ ROLE_LABELS = {
 
 # Permissions supplémentaires que le bot doit avoir dans certains salons
 CHANNEL_EXTRA_PERMS = {
+    "annonces": {"mention_everyone": "mentionner @everyone", "manage_messages": "supprimer l'annonce (Gérer les messages)"},
     "idees": {"add_reactions": "ajouter des réactions", "create_public_threads": "créer des fils"},
 }
 
@@ -73,9 +74,9 @@ def channel_problems(guild: discord.Guild, channel: discord.TextChannel, key: st
 
 def role_problems(guild: discord.Guild, role: discord.Role, key: str = "") -> list[str]:
     problems = []
-    if key != "notif_live" and not role.is_assignable():
+    if not role.is_assignable():
         problems.append("je ne peux pas attribuer ce rôle (mon rôle doit être placé AU-DESSUS dans la liste des rôles)")
-    if key in ("notif_live", "joueurs") and not role.mentionable and not guild.me.guild_permissions.mention_everyone:
+    if key == "joueurs" and not role.mentionable and not guild.me.guild_permissions.mention_everyone:
         problems.append("ce rôle n'est pas mentionnable : coche « Autoriser tout le monde à mentionner ce rôle » ou donne-moi la permission « Mentionner @everyone, @here et tous les rôles »")
     return problems
 
@@ -164,6 +165,48 @@ class Admin(commands.Cog):
             text += "\n⚠️ " + "\n⚠️ ".join(problems)
         await interaction.response.send_message(text, ephemeral=True)
 
+    @cfg_group.command(name="niveau-mode", description="Un seul rang à la fois (remplacer) ou tous les rangs gardés (cumuler)")
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="Remplacer : seul le rang le plus haut est gardé", value="remplacer"),
+            app_commands.Choice(name="Cumuler : tous les rangs atteints sont gardés", value="cumuler"),
+        ]
+    )
+    async def cfg_niveau_mode(self, interaction: discord.Interaction, mode: app_commands.Choice[str]) -> None:
+        await self.bot.db.set_setting("levels.mode", mode.value)
+        await interaction.response.send_message(
+            f"✅ Mode des rangs : **{mode.value}**. Lance `/xp synchroniser` pour l'appliquer aux membres existants.",
+            ephemeral=True,
+        )
+
+    @cfg_group.command(name="echelle", description="Crée les rôles de rang (Débutant → Boss final) et leurs paliers")
+    async def cfg_ladder(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        assert guild is not None
+        lines = []
+        for level, name, color in cfg.LEVEL_LADDER:
+            role = discord.utils.get(guild.roles, name=name)
+            try:
+                if role is None:
+                    role = await guild.create_role(
+                        name=name, colour=discord.Colour(color), hoist=False, mentionable=False,
+                        reason="Échelle de rangs ZenoBot",
+                    )
+                    state = "créé"
+                else:
+                    state = "existant"
+                await self.bot.db.set_reward(level, role.id)
+            except discord.HTTPException as exc:
+                lines.append(f"Niveau {level} — {name} : ❌ {exc}")
+                continue
+            lines.append(f"Niveau **{level}** → {role.mention} ({state})")
+        lines.append(
+            "\nLes rôles sont créés en bas de la liste : **place-les sous le rôle du bot**, "
+            "puis lance `/xp synchroniser` pour les membres qui ont déjà de l'XP."
+        )
+        await interaction.followup.send(truncate("\n".join(lines), 1900), ephemeral=True)
+
     # ------------------------------------------------------------------ accueil / filtre de liens
 
     @cfg_group.command(name="message-bienvenue", description="Change le message d'accueil (vide = message par défaut)")
@@ -248,7 +291,8 @@ class Admin(commands.Cog):
         embed = discord.Embed(title="⚙️ Configuration du bot", color=COLOR_INFO)
         embed.add_field(name="Salons", value=channels, inline=False)
         embed.add_field(name="Rôles", value=roles, inline=False)
-        embed.add_field(name="Récompenses de niveau", value=truncate(reward_text, 1024), inline=False)
+        mode = db.setting("levels.mode", "remplacer")
+        embed.add_field(name=f"Rangs par niveau (mode : {mode})", value=truncate(reward_text, 1024), inline=False)
         embed.add_field(name="Rôles à boutons", value=truncate(self_roles_text, 1024), inline=False)
         embed.add_field(
             name=f"Filtre de liens : {'activé' if links_on else 'désactivé'}",
@@ -309,8 +353,6 @@ class Admin(commands.Cog):
             problems.append("Twitch est désactivé : renseigne TWITCH_CLIENT_ID et TWITCH_CLIENT_SECRET dans le fichier .env.")
         if db.setting("channel.annonces") is None:
             problems.append("Aucun salon d'annonces de live : /config salon fonction:Annonces de live.")
-        if db.setting("role.notif_live") is None:
-            problems.append("Aucun rôle « Notif live » : /config role fonction:Notif live.")
 
         if problems:
             text = "⚠️ **Points à corriger :**\n" + "\n".join(f"• {p}" for p in problems)

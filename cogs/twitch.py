@@ -15,9 +15,7 @@ from discord.ext import commands, tasks
 
 import config as cfg
 from utils import (
-    COLOR_MUTED,
     COLOR_TWITCH,
-    format_duration,
     parse_iso,
     rfc3339,
     truncate,
@@ -222,26 +220,6 @@ class Twitch(commands.Cog):
             embed.set_footer(text="En live depuis")
         return embed
 
-    def _build_end_embed(self, user: Optional[dict[str, Any]]) -> discord.Embed:
-        name = (user or {}).get("display_name") or self.login
-        started = parse_iso(self.state["started_at"]) if self.state.get("started_at") else None
-        ended = self._last_seen_live or utcnow()
-        embed = discord.Embed(
-            title=f"Le live de {name} est terminé",
-            url=f"{self.channel_url}/videos",
-            description="Merci à toutes et tous d'être passés ! 💜",
-            color=COLOR_MUTED,
-        )
-        embed.set_author(name=name, url=self.channel_url, icon_url=(user or {}).get("profile_image_url"))
-        if self.state.get("title"):
-            embed.add_field(name="📝 Titre", value=truncate(discord.utils.escape_markdown(self.state["title"]), 256), inline=False)
-        if started:
-            embed.add_field(name="⏱️ Durée", value=format_duration(ended - started))
-        games = self.state.get("games") or []
-        if games:
-            embed.add_field(name="🎮 Jeux", value=truncate(", ".join(games), 1024))
-        return embed
-
     async def _announce(self, stream: dict[str, Any]) -> None:
         channel = self.bot.channel_setting("annonces")  # type: ignore[attr-defined]
         if channel is None:
@@ -256,38 +234,21 @@ class Twitch(commands.Cog):
         view = _link_view("Regarder sur Twitch", self.channel_url)
         game = stream.get("game_name") or ""
 
-        # Le live reprend juste après une coupure : on réutilise l'annonce existante (pas de nouveau ping)
-        message_id: Optional[int] = None
+        # Le live reprend juste après une coupure : nouvelle annonce, mais sans ping (l'ancienne a été supprimée)
+        quiet = False
         last_end = self.state.get("last_end")
-        if (
-            last_end
-            and self.state.get("message_id")
-            and self.state.get("channel_id") == channel.id
-            and utcnow() - parse_iso(last_end) < timedelta(minutes=cfg.TWITCH_RESUME_WINDOW_MINUTES)
-        ):
-            try:
-                await channel.get_partial_message(self.state["message_id"]).edit(
-                    content=f"🔴 **{name}** est de retour en live !",
-                    embed=embed,
-                    view=view,
-                    allowed_mentions=discord.AllowedMentions.none(),
-                )
-                message_id = self.state["message_id"]
-            except discord.NotFound:
-                message_id = None
+        if last_end and utcnow() - parse_iso(last_end) < timedelta(minutes=cfg.TWITCH_RESUME_WINDOW_MINUTES):
+            quiet = True
 
-        if message_id is None:
-            role = self.bot.role_setting("notif_live")  # type: ignore[attr-defined]
-            content = f"{role.mention} " if role else ""
-            content += f"🔴 **{name}** est en live !"
-            sent = await channel.send(
-                content,
-                embed=embed,
-                view=view,
-                allowed_mentions=discord.AllowedMentions(roles=[role]) if role else discord.AllowedMentions.none(),
-            )
-            message_id = sent.id
-            log.info("Live annoncé dans #%s", channel.name)
+        content = f"🔴 **{name}** est de retour en live !" if quiet else f"@everyone 🔴 **{name}** est en live !"
+        sent = await channel.send(
+            content,
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none() if quiet else discord.AllowedMentions(everyone=True),
+        )
+        message_id = sent.id
+        log.info("Live annoncé dans #%s%s", channel.name, " (reprise, sans ping)" if quiet else "")
 
         self.state.update(
             stream_id=stream["id"],
@@ -326,26 +287,21 @@ class Twitch(commands.Cog):
             await self._save_state()
 
     async def _close_announcement(self) -> None:
-        """Le live est fini : l'annonce devient un récapitulatif (et le ping disparaît du texte)."""
+        """Le live est fini : l'annonce (et son ping) est supprimée."""
         if not self.state.get("stream_id"):
             return
-        user = await self._get_user()
         channel = self.bot.get_channel(self.state.get("channel_id") or 0)
         if isinstance(channel, discord.TextChannel) and self.state.get("message_id"):
             try:
-                await channel.get_partial_message(self.state["message_id"]).edit(
-                    content=None,
-                    embed=self._build_end_embed(user),
-                    view=_link_view("Voir les rediffusions", f"{self.channel_url}/videos"),
-                )
+                await channel.get_partial_message(self.state["message_id"]).delete()
             except discord.NotFound:
                 pass
             except discord.HTTPException as exc:
-                log.warning("Clôture de l'annonce impossible : %s", exc)
-        self.state.update(stream_id=None, last_end=utcnow().isoformat(timespec="seconds"))
+                log.warning("Suppression de l'annonce impossible (permission « Gérer les messages » dans le salon ?) : %s", exc)
+        self.state.update(stream_id=None, message_id=None, last_end=utcnow().isoformat(timespec="seconds"))
         self._offline_streak = 0
         await self._save_state()
-        log.info("Live terminé, annonce clôturée.")
+        log.info("Live terminé, annonce supprimée.")
 
     # ------------------------------------------------------------------ commandes
 
@@ -368,9 +324,8 @@ class Twitch(commands.Cog):
             lines.append(f"❌ {exc}")
 
         annonces = self.bot.channel_setting("annonces")  # type: ignore[attr-defined]
-        role = self.bot.role_setting("notif_live")  # type: ignore[attr-defined]
         lines.append(f"📢 Salon des annonces : {annonces.mention if annonces else '⚠️ non défini (/config salon)'}")
-        lines.append(f"🔔 Rôle pingé : {role.mention if role else '⚠️ non défini (/config role)'}")
+        lines.append("🔔 Ping : @everyone")
         if self.state.get("stream_id"):
             lines.append("📌 Une annonce de live est en cours de suivi.")
         await interaction.followup.send("\n".join(lines), ephemeral=True)

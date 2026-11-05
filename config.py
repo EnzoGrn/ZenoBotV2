@@ -71,6 +71,20 @@ XP_MAX = 25
 XP_COOLDOWN_SECONDS = 60            # un membre ne gagne de l'XP qu'une fois par minute
 XP_MIN_MESSAGE_LENGTH = 5           # les messages plus courts ne rapportent rien
 
+# Échelle de rangs créée par /config echelle : (niveau, nom du rôle, couleur hexadécimale)
+LEVEL_LADDER = (
+    (10, "Débutant", 0x9AA5B1),
+    (20, "Actif", 0x57C478),
+    (25, "Superactif", 0x2ECC71),
+    (30, "Hyperactif", 0x1ABC9C),
+    (40, "No life", 0x3498DB),
+    (50, "Reclus", 0x9B59B6),
+    (60, "Ermite", 0xE67E22),
+    (70, "Empereur", 0xE74C3C),
+    (80, "Ambassadeur", 0xF1C40F),
+    (90, "Boss final", 0xFF2D95),
+)
+
 # --- Anti-spam ---
 SPAM_MAX_MESSAGES = 7               # plus de N messages...
 SPAM_WINDOW_SECONDS = 8             # ...en N secondes = spam
