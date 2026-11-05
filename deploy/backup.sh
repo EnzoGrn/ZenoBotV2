@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exécuté SUR LE VPS (envoyé par le workflow via « ssh ... bash -s ») avant chaque déploiement.
 # Sauvegarde le code actuellement en production pour pouvoir revenir en arrière.
-# Le .env, la base (data/) et le venv ne sont jamais touchés.
+# Le .env et la base (data/) ne sont jamais touchés.
 set -euo pipefail
 umask 002
 
@@ -13,7 +13,7 @@ rm -f "$STATE_DIR/previous.tar.gz"
 
 if [ -f "$APP_DIR/bot.py" ]; then
   tar -czf "$STATE_DIR/previous.tar.gz" -C "$APP_DIR" \
-    --exclude=./venv --exclude=./data --exclude=./.env --exclude=./.deploy --exclude=__pycache__ .
+    --exclude=./data --exclude=./.env --exclude=./.deploy --exclude=__pycache__ .
   echo "Sauvegarde de la version actuelle : $STATE_DIR/previous.tar.gz"
 else
   echo "Premier déploiement : rien à sauvegarder."

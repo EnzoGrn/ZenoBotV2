@@ -1,0 +1,30 @@
+name: zenobot
+
+services:
+  bot:
+    build: .
+    image: zenobot:latest
+    container_name: zenobot
+    restart: unless-stopped
+    # Les secrets viennent du fichier .env posé à côté de ce fichier (jamais dans l'image)
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/bot.db
+    volumes:
+      # Base de données (réglages, XP, avertissements...) : le dossier data/ du VPS.
+      # Il doit appartenir à l'utilisateur 10001 (voir deploy/setup-server.sh).
+      - ./data:/app/data
+    # Durcissement : système de fichiers en lecture seule, aucun privilège
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Logs limités à 30 Mo au total (rotation automatique)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

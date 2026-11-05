@@ -1,0 +1,15 @@
+# Rien de secret ni d'inutile dans l'image
+.env
+.git
+.github
+.gitignore
+.dockerignore
+data
+.deploy
+tests
+deploy
+venv
+__pycache__
+*.pyc
+*.md
+*.tar.gz

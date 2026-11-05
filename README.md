@@ -1,6 +1,6 @@
 # Bot Discord — ZenoSurTwitch_
 
-Un bot Discord pour ta communauté de streamer : il annonce tes lives Twitch, partage tes clips, accueille les nouveaux, gère les rôles, les niveaux et la modération. Il est écrit en Python (discord.py), tourne sur ton VPS et se règle entièrement depuis Discord avec des commandes `/config`.
+Un bot Discord pour ta communauté de streamer : il annonce tes lives Twitch, partage tes clips, accueille les nouveaux, gère les rôles, les niveaux et la modération. Il est écrit en Python (discord.py), tourne dans un conteneur Docker sur ton VPS et se règle entièrement depuis Discord avec des commandes `/config`.
 
 ## Ce qu'il fait
 
@@ -40,7 +40,7 @@ Les droits indiqués sont ceux par défaut. Un admin peut les modifier dans *Par
 
 ## Installation
 
-Compte environ 30 minutes. Il te faut un VPS Linux avec **Python 3.10 ou plus récent**.
+Compte environ 30 minutes. Il te faut un VPS Linux (Ubuntu dans les exemples) avec un accès `sudo`. Python n'est pas à installer : il est inclus dans l'image Docker.
 
 ### 1. Créer le bot sur Discord
 
@@ -61,55 +61,60 @@ Compte environ 30 minutes. Il te faut un VPS Linux avec **Python 3.10 ou plus r�
 ### 2. Créer l'application Twitch
 
 1. Va sur <https://dev.twitch.tv/console/apps> (Twitch demande que la double authentification soit activée sur ton compte).
-2. **Register Your Application** : un nom unique, *OAuth Redirect URL* : `http://localhost`, catégorie *Application Integration*, type de client *Confidential*.
+2. **Register Your Application** : un nom unique, *OAuth Redirect URL* : `https://localhost` (Twitch exige du HTTPS ; le bot ne s'en sert pas), catégorie *Application Integration*, type de client *Confidential*.
 3. Ouvre l'application créée (**Manage**) : copie le **Client ID** et génère un **New Secret** (à copier tout de suite, il ne s'affiche qu'une fois).
 
 Le bot n'accède qu'aux informations publiques de ta chaîne (live, clips). Il ne se connecte pas à ton compte Twitch.
 
-### 3. Installer sur le VPS
+### 3. Installer Docker sur le VPS
+
+Le bot tourne dans un conteneur Docker. Sur Ubuntu, voici la méthode de la [documentation officielle](https://docs.docker.com/engine/install/ubuntu/) (pour un autre système, suis la doc) :
 
 ```bash
-# Dépose le dossier du bot sur le VPS (scp, sftp...), par exemple dans /opt/zenobot
-sudo useradd --system --create-home --home-dir /opt/zenobot --shell /usr/sbin/nologin zenobot   # si le dossier n'existe pas encore
-sudo chown -R zenobot:zenobot /opt/zenobot
-cd /opt/zenobot
-sudo -u zenobot python3 -m venv venv
-sudo -u zenobot venv/bin/pip install -r requirements.txt
-sudo -u zenobot mkdir -p data
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo docker run --rm hello-world        # doit afficher « Hello from Docker! »
 ```
 
-Sur Debian/Ubuntu, si `python3 -m venv` échoue : `sudo apt install python3-venv`.
+### 4. Poser le projet sur le VPS
 
-### 4. Remplir la configuration
+Le projet doit se trouver dans `/opt/zenobot`. Si tu l'as envoyé dans ton dossier personnel (par exemple `~/zenobot`) :
 
 ```bash
-sudo -u zenobot cp .env.example .env
-sudo -u zenobot nano .env        # colle DISCORD_TOKEN, GUILD_ID, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
+sudo mkdir -p /opt/zenobot
+sudo cp -r ~/zenobot/. /opt/zenobot/
+sudo rm -rf /opt/zenobot/.git /opt/zenobot/.github /opt/zenobot/tests
+sudo bash /opt/zenobot/deploy/setup-server.sh
+```
+
+Le script `setup-server.sh` crée l'utilisateur `deploy` (celui qui pilote Docker et qui sera utilisé par GitHub Actions), lui donne le dossier du bot, et prépare `data/`, le dossier de la base de données, pour l'utilisateur du conteneur. Tu peux le relancer sans risque.
+
+### 5. Remplir la configuration
+
+```bash
+cd /tmp
+sudo -u deploy cp /opt/zenobot/.env.example /opt/zenobot/.env
+sudo -u deploy nano /opt/zenobot/.env        # colle DISCORD_TOKEN, GUILD_ID, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
 sudo chmod 600 /opt/zenobot/.env
 ```
 
-Le fichier `.env` reste sur ton VPS : ne l'envoie à personne et ne le mets jamais sur GitHub.
+Le fichier `.env` reste sur ton VPS : ne l'envoie à personne et ne le mets jamais sur GitHub. Il n'est pas copié dans l'image Docker : il est lu au démarrage du conteneur.
 
-### 5. Premier lancement (test)
-
-```bash
-cd /opt/zenobot
-sudo -u zenobot venv/bin/python bot.py
-```
-
-Tu dois voir *« commandes synchronisées »* puis *« Connecté en tant que... »*. Les commandes `/` apparaissent tout de suite sur ton serveur. Arrête avec `Ctrl+C`.
-
-### 6. Le lancer en permanence (systemd)
+### 6. Premier lancement
 
 ```bash
-sudo cp /opt/zenobot/zenobot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now zenobot
-sudo systemctl status zenobot            # doit afficher « active (running) »
-sudo journalctl -u zenobot -f            # suivre les logs en direct
+cd /tmp
+sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --build'
+sudo docker logs -f zenobot              # Ctrl+C pour quitter l'affichage (le bot continue de tourner)
 ```
 
-Si tu n'utilises pas `/opt/zenobot`, adapte les chemins dans `zenobot.service`.
+La première construction de l'image prend une à deux minutes. Tu dois voir *« commandes synchronisées »* puis *« Connecté en tant que... »*, et le bot passe en ligne sur ton serveur. Le conteneur redémarre tout seul s'il plante ou si le VPS redémarre.
 
 ### 7. Régler le bot depuis Discord
 
@@ -137,43 +142,43 @@ Dans cet ordre :
 - **Recherche de joueurs** : une annonce ouverte par personne à la fois, clôturée automatiquement au bout de 6 heures. Les places comptent les joueurs recherchés, sans l'organisateur.
 - **Un seul serveur** : le bot ne fonctionne que sur le serveur `GUILD_ID`. S'il est invité ailleurs, il le quitte.
 
-Les seuils (anti-spam, XP, délais Twitch...) se modifient dans `config.py` ; redémarre le bot ensuite (`sudo systemctl restart zenobot`).
+Les seuils (anti-spam, XP, délais Twitch...) se modifient dans `config.py` ; l'image doit ensuite être reconstruite (un `git push` avec le déploiement automatique, ou la commande de mise à jour à la main plus bas).
 
 ## Déploiement automatique (GitHub Actions)
 
 À chaque `git push` sur la branche `main`, GitHub lance les tests puis met à jour ton VPS tout seul. Les pull requests et les autres branches sont seulement testées, jamais déployées.
 
 Déroulement d'un déploiement :
-1. **Tests** : syntaxe, tests du bot, tests des scripts de déploiement. Si un test échoue, rien n'est déployé.
-2. **Sauvegarde** de la version actuellement en production.
-3. **Envoi du code** par rsync. Le `.env`, la base `data/` et le `venv` ne sont jamais touchés.
-4. **Installation des dépendances, redémarrage, vérification** : le script attend jusqu'à 60 s que le bot se connecte à Discord. S'il n'y arrive pas, il **restaure automatiquement l'ancienne version**, la redémarre, et marque le déploiement en échec (tu reçois l'e-mail de GitHub). Les logs de l'échec sont affichés dans l'onglet *Actions*.
+1. **Tests** : syntaxe, tests du bot, tests des scripts de déploiement, vérification de `compose.yml`, construction de l'image Docker et démarrage de contrôle. Si une étape échoue, rien n'est déployé.
+2. **Sauvegarde** du code actuellement en production.
+3. **Envoi du code** par rsync. Le `.env` et la base `data/` ne sont jamais touchés.
+4. **Reconstruction et redémarrage** (`docker compose up -d --build`), puis vérification : le script attend jusqu'à 90 s que le bot se connecte à Discord. S'il n'y arrive pas, il **restaure automatiquement l'ancienne version**, la reconstruit, et marque le déploiement en échec (tu reçois l'e-mail de GitHub). Les logs de l'échec sont affichés dans l'onglet *Actions*.
 
-Mise en place, une seule fois (environ 15 minutes) :
+Mise en place, une seule fois (environ 15 minutes), une fois le bot installé et en ligne (étapes 1 à 6) :
 
 **a. Mets le projet sur GitHub** : un dépôt **privé**, branche `main`. Le fichier `.gitignore` fourni exclut déjà `.env` : vérifie qu'il n'est jamais commité.
 
-**b. Crée une clé SSH dédiée au déploiement**, sur ton ordinateur (pas de phrase secrète, elle servira à un robot) :
+**b. Crée une clé SSH dédiée au déploiement**, sur ton ordinateur (elle servira à un robot : pas de phrase secrète) :
 
 ```bash
-ssh-keygen -t ed25519 -N "" -C "github-actions-zenobot" -f zenobot_deploy
+ssh-keygen -t ed25519 -C "github-actions-zenobot" -f zenobot_deploy
 ```
 
-Tu obtiens `zenobot_deploy` (clé **privée**, secrète) et `zenobot_deploy.pub` (clé publique).
+Quand `ssh-keygen` demande la phrase secrète, appuie deux fois sur Entrée. Tu obtiens `zenobot_deploy` (clé **privée**, secrète) et `zenobot_deploy.pub` (clé publique).
 
-**c. Prépare le VPS** : copie `deploy/setup-server.sh` sur le VPS et lance-le avec la clé **publique** :
+**c. Donne la clé publique au VPS** (le contenu de `zenobot_deploy.pub`, une ligne qui commence par `ssh-ed25519`) :
 
 ```bash
-sudo bash setup-server.sh "$(cat zenobot_deploy.pub)"
+sudo bash /opt/zenobot/deploy/setup-server.sh "ssh-ed25519 AAAA... github-actions-zenobot"
 ```
 
-Il crée l'utilisateur `deploy`, qui peut écrire le code dans `/opt/zenobot` et redémarrer le service du bot, sans pouvoir lire le `.env` ni agir en root pour autre chose. Teste ensuite depuis ton ordinateur :
+Teste ensuite depuis ton ordinateur :
 
 ```bash
-ssh -i zenobot_deploy deploy@ADRESSE_DU_VPS 'sudo -n systemctl is-active zenobot && journalctl -u zenobot -n 1 --no-pager'
+ssh -i zenobot_deploy deploy@ADRESSE_DU_VPS "docker ps"
 ```
 
-Tu dois voir `active`, puis une ligne de log (pas d'erreur de permission).
+Tu dois voir le conteneur `zenobot` dans la liste.
 
 **d. Récupère l'empreinte du serveur** (elle évite qu'un faux serveur se fasse passer pour le tien) :
 
@@ -181,7 +186,7 @@ Tu dois voir `active`, puis une ligne de log (pas d'erreur de permission).
 ssh-keyscan -t ed25519 ADRESSE_DU_VPS        # si ton SSH n'est pas sur le port 22 : ssh-keyscan -t ed25519 -p PORT ADRESSE_DU_VPS
 ```
 
-Vérifie que l'empreinte correspond bien à ton serveur en lançant `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` sur le VPS, puis garde la ligne obtenue par `ssh-keyscan`.
+Garde la ligne obtenue (celle qui ne commence pas par `#`). Pour être sûr qu'elle est bonne, compare avec `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` lancé sur le VPS.
 
 **e. Ajoute les secrets sur GitHub** : *Settings → Secrets and variables → Actions → New repository secret*.
 
@@ -200,18 +205,46 @@ Crée aussi l'environnement `production` (*Settings → Environments*). Tu peux 
 **g. Premier déploiement** : fais un `git push` sur `main`, ou lance *Actions → Tests et déploiement → Run workflow*.
 
 À savoir :
-- Le **premier déploiement** n'a pas de version précédente à restaurer : si le bot ne démarre pas, le déploiement échoue et il faut regarder les logs.
-- Le retour arrière ne défait pas les changements de base de données (il n'y en a pas de migration automatique) ni de configuration faite via les commandes `/config`.
-- Quiconque peut pousser sur `main` peut exécuter du code sur le VPS sous l'utilisateur du bot, et donc lire son `.env`. Garde le dépôt privé, active la double authentification GitHub et protège la branche `main` (*Settings → Branches*).
-- Si ton VPS n'a pas la même version de Python que le workflow (`python-version` dans `.github/workflows/ci-deploy.yml`), aligne-les.
-- Le dossier du bot est `/opt/zenobot` (variable `APP_DIR` en haut du workflow) et le service s'appelle `zenobot`. Adapte-les dans le workflow si les tiens diffèrent.
+- Le **premier déploiement** automatique n'a pas de version précédente à restaurer si le dossier du VPS était vide : s'il échoue, il faut regarder les logs. Avec le bot installé à la main comme ci-dessus, la sauvegarde existe dès le premier passage.
+- Le retour arrière restaure le code, pas les données : il ne défait ni la base de données ni les réglages faits avec `/config`.
+- L'utilisateur `deploy` pilote Docker, ce qui équivaut à avoir les droits root sur le VPS. Quiconque peut pousser sur `main` peut donc exécuter n'importe quel code sur ton serveur. Garde le dépôt privé, active la double authentification GitHub et protège la branche `main` (*Settings → Branches*).
+- Le dossier du bot est `/opt/zenobot` (variable `APP_DIR` en haut du workflow). Adapte-le dans le workflow si le tien diffère.
 
 ## Maintenance
 
-- **Logs** : `sudo journalctl -u zenobot -f` (ajoute `-n 200` pour les 200 dernières lignes).
-- **Mise à jour** : avec le déploiement automatique, un simple `git push`. À la main : remplace les fichiers `.py` (garde `.env` et `data/`), puis `sudo -u zenobot venv/bin/pip install -r requirements.txt` et `sudo systemctl restart zenobot`.
-- **Sauvegarde** : tout ce qui est mémorisé (réglages, XP, avertissements, rôles à boutons) est dans `data/`. Arrête le service puis copie le dossier `data/` complet (ou utilise `sqlite3 data/bot.db ".backup 'sauvegarde.db'"` sans arrêter).
-- **Token compromis** : régénère-le tout de suite dans le portail Discord (*Bot → Reset Token*), mets-le à jour dans `.env` et redémarre.
+- **Logs** : `sudo docker logs -f zenobot` (ajoute `--tail 200` pour voir les 200 dernières lignes). Ils sont limités à 30 Mo, avec rotation automatique.
+- **Redémarrer / arrêter** : `sudo docker restart zenobot` / `sudo docker stop zenobot`. Attention : `restart` ne relit pas le `.env`. Après avoir modifié le `.env`, recrée le conteneur avec `sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --force-recreate'`.
+- **Mise à jour** : avec le déploiement automatique, un simple `git push`. À la main : remplace les fichiers du projet dans `/opt/zenobot` (garde `.env` et `data/`), puis `sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --build'`.
+- **Sauvegarde de la base** : tout ce que le bot mémorise (réglages, XP, avertissements, rôles à boutons) est dans `/opt/zenobot/data`. Copie à chaud, sans arrêter le bot :
+  ```bash
+  sudo docker exec zenobot python -c "import sqlite3; s=sqlite3.connect('/app/data/bot.db'); d=sqlite3.connect('/app/data/backup.db'); s.backup(d); d.close()"
+  sudo cp /opt/zenobot/data/backup.db ~/zenobot-backup-$(date +%F).db
+  ```
+- **Token compromis** : régénère-le tout de suite dans le portail Discord (*Bot → Reset Token*), mets-le à jour dans `.env`, puis recrée le conteneur (voir plus haut).
+
+## Déménager sur un autre serveur (environ 10 minutes)
+
+Le bot est entièrement décrit par le dépôt Git, plus deux éléments qui ne sont pas dedans : le fichier `.env` et le dossier `data/`.
+
+1. **Ancien serveur** : arrête le bot (deux bots avec le même token publieraient tout en double), puis emballe la configuration et les données :
+   ```bash
+   sudo docker stop zenobot
+   sudo tar czf /tmp/zenobot-migration.tar.gz -C /opt/zenobot data .env
+   ```
+   Récupère l'archive sur ton ordinateur (`scp`). Elle contient tes secrets : garde-la privée et supprime-la ensuite.
+2. **Nouveau serveur** : installe Docker (étape 3), puis crée le dossier et l'utilisateur de déploiement en donnant la même clé publique qu'avant :
+   ```bash
+   sudo mkdir -p /opt/zenobot
+   sudo bash setup-server.sh "ssh-ed25519 AAAA... github-actions-zenobot"
+   ```
+   (le script est dans le dépôt : `deploy/setup-server.sh`, à copier sur le serveur avant de le lancer).
+3. **Restaurer** l'archive envoyée sur le nouveau serveur :
+   ```bash
+   sudo tar xzf zenobot-migration.tar.gz -C /opt/zenobot
+   sudo chown -R 10001:10001 /opt/zenobot/data
+   sudo chown deploy:deploy /opt/zenobot/.env && sudo chmod 600 /opt/zenobot/.env
+   ```
+4. **GitHub** : mets à jour les secrets `VPS_HOST` et `VPS_HOST_KEY` (nouvelle adresse, nouvelle empreinte), puis lance *Actions → Run workflow*. Le workflow envoie le code, construit l'image et démarre le bot.
 
 ## Dépannage
 
@@ -224,6 +257,9 @@ Crée aussi l'environnement `production` (*Settings → Environments*). Tu peux 
 | Un rôle n'est pas attribué | Le rôle du bot doit être **au-dessus** de ce rôle dans la liste (étape 1.5). |
 | *Authentification Twitch refusée* | Vérifie `TWITCH_CLIENT_ID` et `TWITCH_CLIENT_SECRET` dans `.env`. |
 | *Chaîne Twitch introuvable* | Vérifie `TWITCH_CHANNEL` dans `.env`. |
+| `permission denied` sur `/app/data` ou *unable to open database file* | Le dossier de données doit appartenir à l'utilisateur du conteneur : `sudo chown -R 10001:10001 /opt/zenobot/data`. |
+| *permission denied ... docker.sock* | Ton utilisateur n'est pas dans le groupe `docker`. Préfixe la commande par `sudo`, ou passe par `sudo -u deploy`. |
+| Le conteneur redémarre en boucle | `sudo docker logs --tail 50 zenobot` : la cause est dans les dernières lignes (token invalide, intents désactivés, `.env` incomplet...). |
 | Un lien légitime est supprimé | Ajoute le site avec `/config domaine`, ou donne le rôle *Habitué* au membre. |
 
 ## Structure du projet
@@ -235,8 +271,10 @@ database.py         base SQLite
 utils.py            fonctions communes
 cogs/               un fichier par fonctionnalité (admin, twitch, moderation, levels, ...)
 tests/              tests automatiques (lancés par la CI : python tests/test_bot.py)
-deploy/             scripts de déploiement (préparation du VPS, sauvegarde, redémarrage, retour arrière)
+deploy/             scripts de déploiement (préparation du VPS, sauvegarde, reconstruction, retour arrière)
 .github/workflows/  CI/CD GitHub Actions
-zenobot.service     service systemd
+Dockerfile          image Docker du bot
+compose.yml         lancement du conteneur (volume, redémarrage, durcissement)
+.dockerignore       fichiers exclus de l'image (.env, tests, .git...)
 .env.example        modèle de configuration
 ```
