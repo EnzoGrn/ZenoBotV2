@@ -62,7 +62,6 @@ def load_settings() -> Settings:
 
 # --- Twitch ---
 TWITCH_POLL_SECONDS = 60            # fréquence de vérification du live
-TWITCH_CLIPS_POLL_MINUTES = 5       # fréquence de recherche de nouveaux clips
 TWITCH_OFFLINE_GRACE = 3            # vérifications consécutives « hors-ligne » avant de clôturer l'annonce
 TWITCH_RESUME_WINDOW_MINUTES = 10   # si le live reprend dans ce délai, on réutilise la même annonce (pas de nouveau ping)
 

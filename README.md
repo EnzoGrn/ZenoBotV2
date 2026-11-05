@@ -1,74 +1,66 @@
-# Bot Discord — ZenoSurTwitch_
+# ZenoBot
 
-Un bot Discord pour ta communauté de streamer : il annonce tes lives Twitch, partage tes clips, accueille les nouveaux, gère les rôles, les niveaux et la modération. Il est écrit en Python (discord.py), tourne dans un conteneur Docker sur ton VPS et se règle entièrement depuis Discord avec des commandes `/config`.
+Bot Discord de la communauté ZenoSurTwitch_. Python 3.12, discord.py, SQLite, déployé en conteneur Docker. Configuration à chaud via les commandes `/config`.
 
-## Ce qu'il fait
+## Fonctionnalités
 
 | Fonction | Détail |
 |---|---|
-| **Annonces de live** | Dès que tu lances ton stream sur Twitch, un message avec le titre, le jeu et la miniature est publié dans ton salon d'annonces, avec un ping du rôle « Notif live ». Le message se met à jour si tu changes de titre ou de jeu. À la fin du live, il devient un récapitulatif (durée, jeux joués) et le ping disparaît. Si ton stream plante et reprend en moins de 10 minutes, la même annonce est réutilisée : pas de double ping. |
-| **Clips** | Les nouveaux clips de ta chaîne sont reposés dans un salon dédié avec les réactions 🔥 et 😂. |
-| **Accueil** | Message de bienvenue personnalisable + rôle donné automatiquement à l'arrivée (attend la validation des règles si ton serveur a un écran de règles). |
-| **Rôles à boutons** | Un message avec des boutons : un clic pour prendre ou retirer un rôle (Notif live, jeux...). |
-| **Modération** | Filtre de liens (liste de sites autorisés), blocage des invitations vers d'autres serveurs, anti-spam, avertissements, exclusions, expulsions, bannissements, purge de messages, journal dans un salon de logs. |
-| **Niveaux** | XP gagnée en discutant (anti-abus), `/niveau`, `/top`, rôles offerts à certains niveaux. |
-| **Communauté** | `/sondage` (sondages Discord natifs), `/idee` (idées avec votes et fil de discussion), `/cherche-joueurs` (annonce avec boutons Rejoindre / Quitter / Clôturer). |
+| Annonces de live | Embed (titre, jeu, miniature) et ping du rôle « Notif live » au lancement du stream. Mis à jour si le titre ou le jeu change, transformé en récapitulatif (durée, jeux) à la fin. Une reprise en moins de 10 min réutilise l'annonce, sans nouveau ping. |
+| Accueil | Message de bienvenue personnalisable, rôle d'arrivée. Attend la validation des règles si le serveur en a une. |
+| Rôles à boutons | Message avec boutons pour prendre ou retirer des rôles. Boutons persistants. |
+| Modération | Filtre de liens par liste blanche, blocage des invitations, anti-spam, avertissements, exclusions, kick, ban, purge, salon de logs. |
+| Niveaux | XP au message (avec cooldown), classement, rôles débloqués par niveau. |
+| Communauté | Sondages natifs, idées avec votes et fil de discussion, annonces de recherche de joueurs. |
 
-Volontairement absents : commande de planning (tu postes ton planning toi-même le lundi dans ton salon), giveaways, fonctions « pédagogue ».
+## Commandes
 
-## Les commandes
+Droits par défaut, modifiables dans *Paramètres du serveur → Intégrations*.
 
-Les droits indiqués sont ceux par défaut. Un admin peut les modifier dans *Paramètres du serveur → Intégrations → ton bot*.
-
-| Commande | Qui peut l'utiliser | À quoi ça sert |
+| Commande | Droit requis | Rôle |
 |---|---|---|
-| `/config salon` / `role` / `niveau-role` / `message-bienvenue` / `filtre-liens` / `domaine` | Gérer le serveur | Régler le bot |
-| `/config afficher` | Gérer le serveur | Voir la configuration actuelle |
+| `/config salon` `role` `niveau-role` `message-bienvenue` `filtre-liens` `domaine` | Gérer le serveur | Réglages |
+| `/config afficher` | Gérer le serveur | Configuration actuelle |
 | `/config verifier` | Gérer le serveur | Diagnostic : permissions, rôles, salons |
-| `/twitch statut` / `test` | Gérer le serveur | Vérifier la connexion Twitch / voir un aperçu d'annonce |
-| `/roles ajouter` / `retirer` / `liste` / `panel` | Gérer les rôles | Gérer les rôles à boutons |
-| `/warn`, `/warns`, `/unwarn`, `/clearwarns` | Exclure des membres | Avertissements |
-| `/timeout`, `/untimeout` | Exclure des membres | Exclusion temporaire (`10m`, `2h`, `1j`, `1h30m`) |
-| `/kick`, `/ban`, `/unban` | Expulser / Bannir | Sanctions |
-| `/purge` | Gérer les messages | Supprimer des messages récents |
-| `/niveau`, `/top` | Tout le monde | Niveau et classement |
-| `/xp ajouter` / `reset` | Gérer le serveur | Corriger l'XP d'un membre |
-| `/sondage` | Gérer les messages | Créer un sondage (ouvrable à tous dans les Intégrations) |
-| `/idee` | Tout le monde | Proposer une idée |
-| `/idee-statut` | Gérer les messages | Marquer une idée (acceptée, refusée...) |
-| `/cherche-joueurs` | Tout le monde | Trouver des partenaires de jeu |
+| `/twitch statut` `test` | Gérer le serveur | État de la connexion Twitch, aperçu d'annonce |
+| `/roles ajouter` `retirer` `liste` `panel` | Gérer les rôles | Rôles à boutons |
+| `/warn` `warns` `unwarn` `clearwarns` | Exclure des membres | Avertissements |
+| `/timeout` `untimeout` | Exclure des membres | Exclusion temporaire (`10m`, `2h`, `1j`, `1h30m`) |
+| `/kick` `ban` `unban` | Expulser / Bannir | Sanctions |
+| `/purge` | Gérer les messages | Suppression de messages récents |
+| `/niveau` `top` | Tous | Niveau, classement |
+| `/xp ajouter` `reset` | Gérer le serveur | Correction d'XP |
+| `/sondage` | Gérer les messages | Sondage (2 à 5 choix) |
+| `/idee` | Tous | Proposer une idée |
+| `/idee-statut` | Gérer les messages | Statut d'une idée |
+| `/cherche-joueurs` | Tous | Annonce de recherche de partenaires |
 
 ## Installation
 
-Compte environ 30 minutes. Il te faut un VPS Linux (Ubuntu dans les exemples) avec un accès `sudo`. Python n'est pas à installer : il est inclus dans l'image Docker.
+Prérequis : VPS Ubuntu avec accès `sudo`, serveur Discord dont on est administrateur, compte Twitch avec double authentification.
 
-### 1. Créer le bot sur Discord
+### 1. Application Discord
 
-1. Va sur <https://discord.com/developers/applications> → **New Application** → donne-lui un nom.
-2. Note l'**Application ID** (page *General Information*) : c'est ton `client_id` pour l'invitation.
-3. Menu **Bot** :
-   - Dans *Privileged Gateway Intents*, active **Server Members Intent** et **Message Content Intent** (obligatoire, sinon le bot refuse de démarrer).
-   - Clique sur **Reset Token**, copie le token. **Ne le partage avec personne** (pas même avec moi) : il donne le contrôle total du bot.
-4. Invite le bot sur ton serveur avec ce lien (remplace `TON_APPLICATION_ID`) :
-
+1. <https://discord.com/developers/applications> → **New Application**. Noter l'**Application ID**.
+2. Onglet **Bot** : activer **Server Members Intent** et **Message Content Intent** (sans eux, le bot ne démarre pas), puis **Reset Token** et copier le token (`DISCORD_TOKEN`).
+3. Inviter le bot (remplacer `APPLICATION_ID`) :
    ```
-   https://discord.com/oauth2/authorize?client_id=TON_APPLICATION_ID&scope=bot+applications.commands&permissions=564358971223110
+   https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot+applications.commands&permissions=564358971223110
    ```
+4. Dans *Paramètres du serveur → Rôles*, placer le rôle du bot au-dessus des rôles qu'il attribue (arrivée, Habitué, niveaux, rôles à boutons) et en dessous des rôles de modération.
+5. Mode développeur (*Paramètres Discord → Avancés*), clic droit sur le serveur → **Copier l'identifiant** (`GUILD_ID`).
 
-5. Dans *Paramètres du serveur → Rôles*, **glisse le rôle du bot au-dessus** des rôles qu'il doit attribuer (rôle d'arrivée, Habitué, rôles de niveau, rôles à boutons) et **en dessous** de tes rôles de modération.
-6. Active le mode développeur (*Paramètres Discord → Avancés*), puis clic droit sur ton serveur → **Copier l'identifiant** : c'est ton `GUILD_ID`.
+### 2. Application Twitch
 
-### 2. Créer l'application Twitch
+1. <https://dev.twitch.tv/console/apps> → **Register Your Application**.
+2. Nom unique, *OAuth Redirect URL* `https://localhost` (non utilisée), catégorie *Application Integration*, type *Confidential*.
+3. **Manage** → copier le **Client ID** (`TWITCH_CLIENT_ID`), puis **New Secret** (`TWITCH_CLIENT_SECRET`, affiché une seule fois).
 
-1. Va sur <https://dev.twitch.tv/console/apps> (Twitch demande que la double authentification soit activée sur ton compte).
-2. **Register Your Application** : un nom unique, *OAuth Redirect URL* : `https://localhost` (Twitch exige du HTTPS ; le bot ne s'en sert pas), catégorie *Application Integration*, type de client *Confidential*.
-3. Ouvre l'application créée (**Manage**) : copie le **Client ID** et génère un **New Secret** (à copier tout de suite, il ne s'affiche qu'une fois).
+Le bot n'utilise que les données publiques de la chaîne (état du live) : aucune connexion au compte Twitch.
 
-Le bot n'accède qu'aux informations publiques de ta chaîne (live, clips). Il ne se connecte pas à ton compte Twitch.
+### 3. Docker
 
-### 3. Installer Docker sur le VPS
-
-Le bot tourne dans un conteneur Docker. Sur Ubuntu, voici la méthode de la [documentation officielle](https://docs.docker.com/engine/install/ubuntu/) (pour un autre système, suis la doc) :
+Méthode de la [documentation officielle](https://docs.docker.com/engine/install/ubuntu/) pour Ubuntu :
 
 ```bash
 sudo apt-get update
@@ -79,12 +71,12 @@ sudo chmod a+r /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo docker run --rm hello-world        # doit afficher « Hello from Docker! »
+sudo docker run --rm hello-world
 ```
 
-### 4. Poser le projet sur le VPS
+### 4. Projet sur le VPS
 
-Le projet doit se trouver dans `/opt/zenobot`. Si tu l'as envoyé dans ton dossier personnel (par exemple `~/zenobot`) :
+Le projet doit être dans `/opt/zenobot`. Depuis une copie dans `~/zenobot` :
 
 ```bash
 sudo mkdir -p /opt/zenobot
@@ -93,188 +85,183 @@ sudo rm -rf /opt/zenobot/.git /opt/zenobot/.github /opt/zenobot/tests
 sudo bash /opt/zenobot/deploy/setup-server.sh
 ```
 
-Le script `setup-server.sh` crée l'utilisateur `deploy` (celui qui pilote Docker et qui sera utilisé par GitHub Actions), lui donne le dossier du bot, et prépare `data/`, le dossier de la base de données, pour l'utilisateur du conteneur. Tu peux le relancer sans risque.
+`setup-server.sh` (relançable sans risque) :
+- crée l'utilisateur `deploy`, membre du groupe `docker`, propriétaire de `/opt/zenobot` ;
+- réserve `/opt/zenobot/data` à l'uid 10001 (utilisateur du conteneur) ;
+- installe rsync si absent ;
+- accepte en argument la clé publique SSH de GitHub Actions (voir plus bas).
 
-### 5. Remplir la configuration
+### 5. Configuration
 
 ```bash
 cd /tmp
 sudo -u deploy cp /opt/zenobot/.env.example /opt/zenobot/.env
-sudo -u deploy nano /opt/zenobot/.env        # colle DISCORD_TOKEN, GUILD_ID, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET
+sudo -u deploy nano /opt/zenobot/.env
 sudo chmod 600 /opt/zenobot/.env
 ```
 
-Le fichier `.env` reste sur ton VPS : ne l'envoie à personne et ne le mets jamais sur GitHub. Il n'est pas copié dans l'image Docker : il est lu au démarrage du conteneur.
+Variables obligatoires : `DISCORD_TOKEN`, `GUILD_ID`. Sans `TWITCH_CLIENT_ID` et `TWITCH_CLIENT_SECRET`, les annonces de live sont désactivées. Le `.env` n'est jamais copié dans l'image : le conteneur le lit au démarrage.
 
-### 6. Premier lancement
+### 6. Lancement
 
 ```bash
 cd /tmp
 sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --build'
-sudo docker logs -f zenobot              # Ctrl+C pour quitter l'affichage (le bot continue de tourner)
+sudo docker logs -f zenobot
 ```
 
-La première construction de l'image prend une à deux minutes. Tu dois voir *« commandes synchronisées »* puis *« Connecté en tant que... »*, et le bot passe en ligne sur ton serveur. Le conteneur redémarre tout seul s'il plante ou si le VPS redémarre.
+Les logs doivent contenir `commandes synchronisées` puis `Connecté en tant que`. Le conteneur redémarre automatiquement après un plantage ou un reboot du VPS.
 
-### 7. Régler le bot depuis Discord
+### 7. Réglages dans Discord
 
-Dans cet ordre :
+1. `/config salon` : *Annonces de live*, puis facultativement *Bienvenue*, *Logs*, *Idées*, *Recherche de joueurs*, *Montées de niveau*.
+2. Rendre le rôle « Notif live » mentionnable (*Rôles → ce rôle → Autoriser tout le monde à mentionner ce rôle*), puis `/config role` → *Notif live*.
+3. `/config role` : *Rôle d'arrivée* et *Habitué* (autorisé à poster des liens).
+4. Rôles à boutons : `/roles ajouter` pour chaque rôle, puis `/roles panel`. Après une modification de la liste, supprimer l'ancien message et republier le panneau.
+5. Récompenses de niveau : `/config niveau-role niveau:5 role:@Habitué`.
+6. `/twitch test` (aperçu sans ping, supprimé après 60 s) et `/twitch statut`.
+7. `/config verifier` liste les problèmes restants. À relancer après chaque changement important.
 
-1. `/config salon` → choisis la fonction *Annonces de live* et ton salon d'annonces. Idem pour *Clips*, *Bienvenue*, *Logs*, *Idées*, *Recherche de joueurs*, *Montées de niveau* (tous facultatifs).
-2. Rends ton rôle « Notif live » **mentionnable** (*Paramètres → Rôles → ce rôle → Autoriser tout le monde à mentionner ce rôle*), puis `/config role` → *Notif live*.
-3. `/config role` → *Rôle d'arrivée* (rôle donné aux nouveaux) et *Habitué* (a le droit de poster des liens).
-4. Rôles à boutons : `/roles ajouter` pour chaque rôle (ex. Notif live 🔔, tes jeux), puis `/roles panel` pour publier le message avec les boutons. Quand tu modifies la liste, supprime l'ancien message et republie le panneau.
-5. Récompenses de niveau (exemple) : `/config niveau-role niveau:5 role:@Habitué`.
-6. `/twitch test` : publie un aperçu de l'annonce (sans ping, supprimé au bout de 60 s). `/twitch statut` vérifie la connexion à Twitch.
-7. **`/config verifier`** : le bot te liste ce qui reste à corriger. Refais-le après chaque réglage important.
+L'intégration Twitch native de Discord (*Intégrations → Twitch*) attribue déjà un rôle aux abonnés : le bot ne s'en charge pas.
 
-> Astuce : l'intégration Twitch native de Discord (*Paramètres du serveur → Intégrations → Twitch*) donne automatiquement un rôle à tes abonnés. Le bot n'a pas besoin de s'en occuper.
+## Comportement
 
-## Comment il se comporte
+- **Live** : interrogation de Twitch toutes les minutes (annonce 1 à 2 min après le début). Fin de live confirmée après 3 vérifications hors-ligne consécutives.
+- **Staff exempté** : les membres avec *Gérer les messages* (ou administrateur) échappent au filtre de liens et à l'anti-spam.
+- **Filtre de liens** : actif par défaut. Autorisés : twitch.tv, youtube.com, youtu.be, tenor.com, giphy.com, imgur.com, medal.tv, streamable.com, discordapp.com/.net, x.com, twitter.com et leurs sous-domaines. Le rôle *Habitué* peut poster n'importe quel lien. Les invitations vers d'autres serveurs sont toujours bloquées. `/config domaine` modifie la liste, `/config filtre-liens actif:False` désactive le filtre.
+- **Anti-spam** : plus de 7 messages en 8 s, 3 messages identiques en 30 s ou 6 mentions dans un message → suppression et exclusion de 5 min.
+- **Avertissements** : exclusion automatique d'1 h tous les 3 avertissements. Le membre sanctionné reçoit un message privé si ses MP sont ouverts.
+- **XP** : 15 à 25 XP par message, au plus un par minute, 5 caractères minimum. Un message supprimé par la modération ne rapporte rien.
+- **Recherche de joueurs** : une annonce ouverte par personne, clôturée après 6 h. Les places excluent l'organisateur.
+- **Serveur unique** : le bot ne fonctionne que sur `GUILD_ID` et quitte tout autre serveur.
 
-- **Live** : Twitch est interrogé toutes les minutes (l'annonce peut donc arriver 1 à 2 minutes après le début du stream). Le live n'est considéré comme terminé qu'après 3 minutes hors-ligne, pour absorber les micro-coupures.
-- **Clips** : vérifiés toutes les 5 minutes. À l'activation, seuls les clips créés **à partir de ce moment** sont postés (pas de rafale d'anciens clips).
-- **Staff exempté** : les membres qui ont la permission *Gérer les messages* (ou admin) ne sont pas touchés par le filtre de liens et l'anti-spam.
-- **Filtre de liens** : activé par défaut. Autorisés : twitch.tv, youtube.com, youtu.be, tenor.com, giphy.com, imgur.com, medal.tv, streamable.com, discordapp.com/.net, x.com, twitter.com (et leurs sous-domaines). Les membres avec le rôle *Habitué* peuvent poster n'importe quel lien. Les invitations vers d'autres serveurs sont toujours bloquées (sauf pour le staff). Ajouter un site : `/config domaine action:Ajouter domaine:exemple.com`. Désactiver tout le filtre : `/config filtre-liens actif:False`.
-- **Anti-spam** : plus de 7 messages en 8 secondes, 3 messages identiques d'affilée (30 s) ou 6 mentions dans un message → messages supprimés + exclusion de 5 minutes.
-- **Avertissements** : tous les 3 avertissements, le membre est exclu automatiquement 1 heure. Les membres sanctionnés reçoivent un message privé (si leurs MP sont ouverts).
-- **XP** : 15 à 25 XP par message, au maximum une fois par minute, messages de 5 caractères minimum. Un message supprimé par la modération ne rapporte rien.
-- **Recherche de joueurs** : une annonce ouverte par personne à la fois, clôturée automatiquement au bout de 6 heures. Les places comptent les joueurs recherchés, sans l'organisateur.
-- **Un seul serveur** : le bot ne fonctionne que sur le serveur `GUILD_ID`. S'il est invité ailleurs, il le quitte.
-
-Les seuils (anti-spam, XP, délais Twitch...) se modifient dans `config.py` ; l'image doit ensuite être reconstruite (un `git push` avec le déploiement automatique, ou la commande de mise à jour à la main plus bas).
+Les seuils (anti-spam, XP, délais Twitch) sont dans `config.py`. Une modification demande de reconstruire l'image.
 
 ## Déploiement automatique (GitHub Actions)
 
-À chaque `git push` sur la branche `main`, GitHub lance les tests puis met à jour ton VPS tout seul. Les pull requests et les autres branches sont seulement testées, jamais déployées.
+Un push sur `main` déclenche :
+1. les tests (syntaxe, bot, scripts de déploiement), la validation de `compose.yml`, la construction de l'image et un démarrage de contrôle avec les restrictions de production ;
+2. la sauvegarde du code en production ;
+3. l'envoi du code par rsync (`.env` et `data/` jamais touchés) ;
+4. `docker compose up -d --build --force-recreate`, puis l'attente (90 s max) de `Connecté en tant que` dans les logs. En cas d'échec : restauration de la version précédente, reconstruction, et job en échec.
 
-Déroulement d'un déploiement :
-1. **Tests** : syntaxe, tests du bot, tests des scripts de déploiement, vérification de `compose.yml`, construction de l'image Docker et démarrage de contrôle. Si une étape échoue, rien n'est déployé.
-2. **Sauvegarde** du code actuellement en production.
-3. **Envoi du code** par rsync. Le `.env` et la base `data/` ne sont jamais touchés.
-4. **Reconstruction et redémarrage** (`docker compose up -d --build`), puis vérification : le script attend jusqu'à 90 s que le bot se connecte à Discord. S'il n'y arrive pas, il **restaure automatiquement l'ancienne version**, la reconstruit, et marque le déploiement en échec (tu reçois l'e-mail de GitHub). Les logs de l'échec sont affichés dans l'onglet *Actions*.
+Les pull requests et les autres branches ne sont que testées.
 
-Mise en place, une seule fois (environ 15 minutes), une fois le bot installé et en ligne (étapes 1 à 6) :
+### Mise en place
 
-**a. Mets le projet sur GitHub** : un dépôt **privé**, branche `main`. Le fichier `.gitignore` fourni exclut déjà `.env` : vérifie qu'il n'est jamais commité.
+1. **Dépôt GitHub privé**, branche `main`. Vérifier que `.env` n'est jamais commité.
+2. **Clé SSH dédiée**, sur le poste local :
+   ```bash
+   ssh-keygen -t ed25519 -C "github-actions-zenobot" -f zenobot_deploy
+   ```
+   Laisser la phrase secrète vide (Entrée deux fois). Produit `zenobot_deploy` (privée) et `zenobot_deploy.pub` (publique).
+3. **Clé publique sur le VPS** :
+   ```bash
+   sudo bash /opt/zenobot/deploy/setup-server.sh "ssh-ed25519 AAAA... github-actions-zenobot"
+   ```
+   Test depuis le poste local : `ssh -i zenobot_deploy deploy@ADRESSE_DU_VPS "docker ps"` doit lister le conteneur `zenobot`.
+4. **Empreinte du serveur**, à lire sur le VPS :
+   ```bash
+   echo "ADRESSE_DU_VPS $(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
+   ```
+   Utiliser la même adresse que `VPS_HOST`. Pour un port autre que 22 : `[ADRESSE_DU_VPS]:PORT`.
+5. **Secrets** (*Settings → Secrets and variables → Actions*) :
 
-**b. Crée une clé SSH dédiée au déploiement**, sur ton ordinateur (elle servira à un robot : pas de phrase secrète) :
+   | Secret | Valeur |
+   |---|---|
+   | `VPS_HOST` | adresse ou IP du VPS |
+   | `VPS_USER` | `deploy` |
+   | `VPS_PORT` | port SSH (vide pour 22) |
+   | `VPS_SSH_KEY` | contenu complet de `zenobot_deploy`, lignes `BEGIN` et `END` comprises |
+   | `VPS_HOST_KEY` | la ligne de l'étape 4 |
+
+6. **Environnement** `production` (*Settings → Environments*). *Required reviewers* permet de valider chaque déploiement.
+7. Supprimer `zenobot_deploy` du poste local, puis pousser sur `main` ou lancer *Actions → Run workflow*.
+
+### Limites
+
+- Le retour arrière restaure le code, pas les données : base et réglages `/config` ne sont pas annulés.
+- Sans version précédente sur le VPS (dossier vide), un premier déploiement en échec n'a rien à restaurer.
+- `deploy` pilote Docker, ce qui équivaut à root sur le VPS : toute personne pouvant pousser sur `main` exécute du code sur le serveur. Dépôt privé, double authentification GitHub, branche `main` protégée.
+- Le dossier cible est `/opt/zenobot` (variable `APP_DIR` du workflow).
+
+## Exploitation
 
 ```bash
-ssh-keygen -t ed25519 -C "github-actions-zenobot" -f zenobot_deploy
+sudo docker logs -f zenobot --tail 200          # logs (rotation à 30 Mo)
+sudo docker restart zenobot                      # redémarrage
+sudo docker stop zenobot                         # arrêt
 ```
 
-Quand `ssh-keygen` demande la phrase secrète, appuie deux fois sur Entrée. Tu obtiens `zenobot_deploy` (clé **privée**, secrète) et `zenobot_deploy.pub` (clé publique).
-
-**c. Donne la clé publique au VPS** (le contenu de `zenobot_deploy.pub`, une ligne qui commence par `ssh-ed25519`) :
+`docker restart` ne relit pas le `.env`. Après l'avoir modifié :
 
 ```bash
-sudo bash /opt/zenobot/deploy/setup-server.sh "ssh-ed25519 AAAA... github-actions-zenobot"
+sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --force-recreate'
 ```
 
-Teste ensuite depuis ton ordinateur :
+**Mise à jour manuelle** : remplacer les fichiers de `/opt/zenobot` (sauf `.env` et `data/`), puis `sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --build'`.
+
+**Sauvegarde de la base** (à chaud) :
 
 ```bash
-ssh -i zenobot_deploy deploy@ADRESSE_DU_VPS "docker ps"
+sudo docker exec zenobot python -c "import sqlite3; s=sqlite3.connect('/app/data/bot.db'); d=sqlite3.connect('/app/data/backup.db'); s.backup(d); d.close()"
+sudo cp /opt/zenobot/data/backup.db ~/zenobot-backup-$(date +%F).db
 ```
 
-Tu dois voir le conteneur `zenobot` dans la liste.
+**Token compromis** : *Bot → Reset Token* sur le portail Discord, mise à jour du `.env`, recréation du conteneur.
 
-**d. Récupère l'empreinte du serveur** (elle évite qu'un faux serveur se fasse passer pour le tien) :
+## Migration vers un autre serveur
 
-```bash
-ssh-keyscan -t ed25519 ADRESSE_DU_VPS        # si ton SSH n'est pas sur le port 22 : ssh-keyscan -t ed25519 -p PORT ADRESSE_DU_VPS
-```
+Le dépôt contient tout, sauf `.env` et `data/`.
 
-Garde la ligne obtenue (celle qui ne commence pas par `#`). Pour être sûr qu'elle est bonne, compare avec `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` lancé sur le VPS.
-
-**e. Ajoute les secrets sur GitHub** : *Settings → Secrets and variables → Actions → New repository secret*.
-
-| Secret | Valeur |
-|---|---|
-| `VPS_HOST` | adresse ou IP du VPS |
-| `VPS_USER` | `deploy` |
-| `VPS_PORT` | port SSH (laisse vide si c'est 22) |
-| `VPS_SSH_KEY` | **contenu entier** du fichier `zenobot_deploy` (clé privée, avec les lignes `BEGIN`/`END`) |
-| `VPS_HOST_KEY` | la ligne obtenue à l'étape d |
-
-Crée aussi l'environnement `production` (*Settings → Environments*). Tu peux y activer **Required reviewers** si tu veux valider chaque déploiement à la main.
-
-**f. Supprime la clé privée de ton ordinateur** une fois le secret enregistré (ou garde-la dans un gestionnaire de mots de passe), et ne la partage jamais.
-
-**g. Premier déploiement** : fais un `git push` sur `main`, ou lance *Actions → Tests et déploiement → Run workflow*.
-
-À savoir :
-- Le **premier déploiement** automatique n'a pas de version précédente à restaurer si le dossier du VPS était vide : s'il échoue, il faut regarder les logs. Avec le bot installé à la main comme ci-dessus, la sauvegarde existe dès le premier passage.
-- Le retour arrière restaure le code, pas les données : il ne défait ni la base de données ni les réglages faits avec `/config`.
-- L'utilisateur `deploy` pilote Docker, ce qui équivaut à avoir les droits root sur le VPS. Quiconque peut pousser sur `main` peut donc exécuter n'importe quel code sur ton serveur. Garde le dépôt privé, active la double authentification GitHub et protège la branche `main` (*Settings → Branches*).
-- Le dossier du bot est `/opt/zenobot` (variable `APP_DIR` en haut du workflow). Adapte-le dans le workflow si le tien diffère.
-
-## Maintenance
-
-- **Logs** : `sudo docker logs -f zenobot` (ajoute `--tail 200` pour voir les 200 dernières lignes). Ils sont limités à 30 Mo, avec rotation automatique.
-- **Redémarrer / arrêter** : `sudo docker restart zenobot` / `sudo docker stop zenobot`. Attention : `restart` ne relit pas le `.env`. Après avoir modifié le `.env`, recrée le conteneur avec `sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --force-recreate'`.
-- **Mise à jour** : avec le déploiement automatique, un simple `git push`. À la main : remplace les fichiers du projet dans `/opt/zenobot` (garde `.env` et `data/`), puis `sudo -u deploy bash -c 'cd /opt/zenobot && docker compose up -d --build'`.
-- **Sauvegarde de la base** : tout ce que le bot mémorise (réglages, XP, avertissements, rôles à boutons) est dans `/opt/zenobot/data`. Copie à chaud, sans arrêter le bot :
-  ```bash
-  sudo docker exec zenobot python -c "import sqlite3; s=sqlite3.connect('/app/data/bot.db'); d=sqlite3.connect('/app/data/backup.db'); s.backup(d); d.close()"
-  sudo cp /opt/zenobot/data/backup.db ~/zenobot-backup-$(date +%F).db
-  ```
-- **Token compromis** : régénère-le tout de suite dans le portail Discord (*Bot → Reset Token*), mets-le à jour dans `.env`, puis recrée le conteneur (voir plus haut).
-
-## Déménager sur un autre serveur (environ 10 minutes)
-
-Le bot est entièrement décrit par le dépôt Git, plus deux éléments qui ne sont pas dedans : le fichier `.env` et le dossier `data/`.
-
-1. **Ancien serveur** : arrête le bot (deux bots avec le même token publieraient tout en double), puis emballe la configuration et les données :
+1. Ancien serveur : arrêter le bot (deux instances avec le même token dupliquent les messages) et archiver :
    ```bash
    sudo docker stop zenobot
    sudo tar czf /tmp/zenobot-migration.tar.gz -C /opt/zenobot data .env
    ```
-   Récupère l'archive sur ton ordinateur (`scp`). Elle contient tes secrets : garde-la privée et supprime-la ensuite.
-2. **Nouveau serveur** : installe Docker (étape 3), puis crée le dossier et l'utilisateur de déploiement en donnant la même clé publique qu'avant :
+   L'archive contient les secrets : la transférer par `scp`, puis la supprimer.
+2. Nouveau serveur : installer Docker (étape 3), copier `deploy/setup-server.sh`, puis :
    ```bash
    sudo mkdir -p /opt/zenobot
    sudo bash setup-server.sh "ssh-ed25519 AAAA... github-actions-zenobot"
    ```
-   (le script est dans le dépôt : `deploy/setup-server.sh`, à copier sur le serveur avant de le lancer).
-3. **Restaurer** l'archive envoyée sur le nouveau serveur :
+3. Restaurer l'archive :
    ```bash
    sudo tar xzf zenobot-migration.tar.gz -C /opt/zenobot
    sudo chown -R 10001:10001 /opt/zenobot/data
    sudo chown deploy:deploy /opt/zenobot/.env && sudo chmod 600 /opt/zenobot/.env
    ```
-4. **GitHub** : mets à jour les secrets `VPS_HOST` et `VPS_HOST_KEY` (nouvelle adresse, nouvelle empreinte), puis lance *Actions → Run workflow*. Le workflow envoie le code, construit l'image et démarre le bot.
+4. GitHub : mettre à jour `VPS_HOST` et `VPS_HOST_KEY`, puis lancer *Actions → Run workflow*.
 
 ## Dépannage
 
-| Problème | Solution |
+| Symptôme | Cause et correction |
 |---|---|
-| Le bot refuse de démarrer : *PrivilegedIntentsRequired* | Active *Server Members Intent* et *Message Content Intent* dans le portail Discord (étape 1.3). |
-| Les commandes `/` n'apparaissent pas | Vérifie `GUILD_ID`, que l'invitation contenait `applications.commands`, redémarre le bot puis recharge Discord (`Ctrl+R`). |
-| Pas d'annonce de live | `/twitch statut` puis `/config verifier`. Cause fréquente : salon d'annonces non défini ou permissions manquantes dans ce salon. |
-| L'annonce n'envoie pas de notification | Le rôle « Notif live » n'est pas mentionnable (étape 7.2). |
-| Un rôle n'est pas attribué | Le rôle du bot doit être **au-dessus** de ce rôle dans la liste (étape 1.5). |
-| *Authentification Twitch refusée* | Vérifie `TWITCH_CLIENT_ID` et `TWITCH_CLIENT_SECRET` dans `.env`. |
-| *Chaîne Twitch introuvable* | Vérifie `TWITCH_CHANNEL` dans `.env`. |
-| `permission denied` sur `/app/data` ou *unable to open database file* | Le dossier de données doit appartenir à l'utilisateur du conteneur : `sudo chown -R 10001:10001 /opt/zenobot/data`. |
-| *permission denied ... docker.sock* | Ton utilisateur n'est pas dans le groupe `docker`. Préfixe la commande par `sudo`, ou passe par `sudo -u deploy`. |
-| Le conteneur redémarre en boucle | `sudo docker logs --tail 50 zenobot` : la cause est dans les dernières lignes (token invalide, intents désactivés, `.env` incomplet...). |
-| Un lien légitime est supprimé | Ajoute le site avec `/config domaine`, ou donne le rôle *Habitué* au membre. |
+| `PrivilegedIntentsRequired` | Activer *Server Members Intent* et *Message Content Intent* (étape 1.2). |
+| Commandes `/` absentes | Vérifier `GUILD_ID` et le scope `applications.commands` de l'invitation, recréer le conteneur, recharger Discord (`Ctrl+R`). |
+| Pas d'annonce de live | `/twitch statut` puis `/config verifier` : salon non défini ou permissions manquantes dans ce salon. |
+| Annonce sans notification | Rôle « Notif live » non mentionnable (étape 7.2). |
+| Rôle non attribué | Le rôle du bot doit être au-dessus du rôle visé (étape 1.4). |
+| `Authentification Twitch refusée` | `TWITCH_CLIENT_ID` ou `TWITCH_CLIENT_SECRET` incorrect. |
+| `Chaîne Twitch introuvable` | `TWITCH_CHANNEL` incorrect. |
+| `permission denied` sur `/app/data`, `unable to open database file` | `sudo chown -R 10001:10001 /opt/zenobot/data` |
+| `permission denied ... docker.sock` | Utilisateur hors du groupe `docker` : préfixer par `sudo` ou passer par `sudo -u deploy`. |
+| Conteneur en redémarrage permanent | `sudo docker logs --tail 50 zenobot` : token invalide, intents désactivés, `.env` incomplet. |
+| Lien légitime supprimé | `/config domaine`, ou rôle *Habitué* pour le membre. |
 
-## Structure du projet
+## Structure
 
 ```
 bot.py              point d'entrée
-config.py           lecture du .env + seuils réglables
+config.py           lecture du .env, seuils réglables
 database.py         base SQLite
 utils.py            fonctions communes
-cogs/               un fichier par fonctionnalité (admin, twitch, moderation, levels, ...)
-tests/              tests automatiques (lancés par la CI : python tests/test_bot.py)
+cogs/               une fonctionnalité par fichier
+tests/              tests automatiques (python tests/test_bot.py, bash tests/test_deploy.sh)
 deploy/             scripts de déploiement (préparation du VPS, sauvegarde, reconstruction, retour arrière)
-.github/workflows/  CI/CD GitHub Actions
-Dockerfile          image Docker du bot
-compose.yml         lancement du conteneur (volume, redémarrage, durcissement)
-.dockerignore       fichiers exclus de l'image (.env, tests, .git...)
+.github/workflows/  CI/CD
+Dockerfile          image du bot
+compose.yml         conteneur (volume, redémarrage, durcissement)
+.dockerignore       exclusions de l'image
 .env.example        modèle de configuration
 ```

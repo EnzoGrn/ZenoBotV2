@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -48,10 +47,6 @@ CREATE TABLE IF NOT EXISTS self_roles (
     role_id INTEGER PRIMARY KEY,
     label   TEXT NOT NULL,
     emoji   TEXT
-);
-CREATE TABLE IF NOT EXISTS posted_clips (
-    clip_id   TEXT PRIMARY KEY,
-    posted_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS lfg (
     message_id INTEGER PRIMARY KEY,
@@ -104,7 +99,6 @@ class Database:
 
         self._settings = {r["key"]: r["value"] for r in await self.fetchall("SELECT key, value FROM settings")}
         self._domains = {r["domain"] for r in await self.fetchall("SELECT domain FROM allowed_domains")}
-        await self.prune_clips()
         log.info("Base de données prête : %s", self.path)
 
     async def close(self) -> None:
@@ -281,21 +275,6 @@ class Database:
 
     async def list_self_roles(self) -> list[aiosqlite.Row]:
         return await self.fetchall("SELECT * FROM self_roles ORDER BY rowid")
-
-    # ------------------------------------------------------------------ clips Twitch
-
-    async def clip_posted(self, clip_id: str) -> bool:
-        return await self.fetchone("SELECT 1 FROM posted_clips WHERE clip_id = ?", (clip_id,)) is not None
-
-    async def mark_clip_posted(self, clip_id: str) -> None:
-        await self.execute(
-            "INSERT OR IGNORE INTO posted_clips (clip_id, posted_at) VALUES (?, ?)",
-            (clip_id, utcnow().isoformat(timespec="seconds")),
-        )
-
-    async def prune_clips(self, days: int = 60) -> None:
-        cutoff = (utcnow() - timedelta(days=days)).isoformat(timespec="seconds")
-        await self.execute("DELETE FROM posted_clips WHERE posted_at < ?", (cutoff,))
 
     # ------------------------------------------------------------------ recherche de joueurs
 

@@ -165,10 +165,6 @@ async def test_db(tmp: Path):
     assert await db.remove_self_role(10)
     ok("rôles à boutons")
 
-    assert not await db.clip_posted("c1")
-    await db.mark_clip_posted("c1"); await db.mark_clip_posted("c1")
-    assert await db.clip_posted("c1")
-    ok("clips")
 
     await db.create_lfg(100, 5, 1, "Valorant", 2, "ranked")
     assert await db.lfg_join(100, 2) == "ok"
@@ -236,9 +232,7 @@ class FakeTwitch:
         self.n = 0
         self.token = None
         self.stream = None
-        self.clips = []
         self.fail = False
-        self.clip_params = []
         self.token_requests = 0
 
     async def token_h(self, request):
@@ -265,11 +259,6 @@ class FakeTwitch:
             return web.Response(status=500, text="boom")
         return web.json_response({"data": [self.stream] if self.stream else []})
 
-    async def clips_h(self, request):
-        if not self._ok(request):
-            return web.Response(status=401, text="bad token")
-        self.clip_params.append(dict(request.query))
-        return web.json_response({"data": self.clips})
 
 
 class FakeMsg:
@@ -307,7 +296,6 @@ async def test_twitch(tmp: Path):
     app.router.add_post("/oauth2/token", fake.token_h)
     app.router.add_get("/helix/users", fake.users_h)
     app.router.add_get("/helix/streams", fake.streams_h)
-    app.router.add_get("/helix/clips", fake.clips_h)
     runner = web.AppRunner(app); await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0); await site.start()
     port = site._server.sockets[0].getsockname()[1]
@@ -316,7 +304,7 @@ async def test_twitch(tmp: Path):
     await bot.db.connect()
     chan = FakeChannel(77)
     role = SimpleNamespace(id=5, mention="<@&5>")
-    bot.channel_setting = lambda key: chan if key in ("annonces", "clips") else None
+    bot.channel_setting = lambda key: chan if key == "annonces" else None
     bot.role_setting = lambda key: role if key == "notif_live" else None
     bot.get_channel = lambda cid: chan if cid == chan.id else None
 
@@ -431,29 +419,10 @@ async def test_twitch(tmp: Path):
     n = len(chan.sent)
     await cog._check_live()
     assert len(chan.sent) == n and not cog.state.get("stream_id")
-    bot.channel_setting = lambda key: chan if key in ("annonces", "clips") else None
+    bot.channel_setting = lambda key: chan if key == "annonces" else None
     await cog._check_live()
     assert len(chan.sent) == n + 1
     ok("salon non configuré puis configuré en plein live")
-
-    # --- clips
-    chan.sent.clear()
-    cog.state = {}
-    await cog._check_clips()                       # 1er passage : pas de rattrapage
-    assert chan.sent == [] and cog.state["clips_checked_at"]
-    fake.clips = [
-        {"id": "B", "title": "Le **fail** @everyone", "creator_name": "Alice", "url": "https://clips.twitch.tv/B", "created_at": "2026-11-05T01:10:00Z"},
-        {"id": "A", "title": "Le boss", "creator_name": "Bob", "url": "https://clips.twitch.tv/A", "created_at": "2026-11-05T01:00:00Z"},
-    ]
-    await cog._check_clips()
-    assert len(chan.sent) == 2
-    assert "clips.twitch.tv/A" in chan.sent[0][1] and "clips.twitch.tv/B" in chan.sent[1][1]  # du plus ancien au plus récent
-    assert chan.sent[1][2]["allowed_mentions"].everyone is False
-    assert chan.sent[0][0].reactions == ["🔥", "😂"]
-    assert fake.clip_params[-1]["broadcaster_id"] == "42" and fake.clip_params[-1]["started_at"].endswith("Z")
-    await cog._check_clips()                       # mêmes clips : aucun doublon
-    assert len(chan.sent) == 2
-    ok("clips : pas de rattrapage, ordre chronologique, pas de doublon, mentions neutralisées")
 
     await client.close()
     await runner.cleanup()

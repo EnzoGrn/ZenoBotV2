@@ -1,4 +1,4 @@
-"""Twitch : annonces de live et partage automatique des clips (API Helix, sans webhook)."""
+"""Twitch : annonces de live (API Helix, sans webhook)."""
 from __future__ import annotations
 
 import asyncio
@@ -104,9 +104,6 @@ class TwitchClient:
         data = await self._get("streams", {"user_login": login})
         return data["data"][0] if data.get("data") else None
 
-    async def get_clips(self, broadcaster_id: str, started_at, first: int = 50) -> list[dict[str, Any]]:
-        data = await self._get("clips", {"broadcaster_id": broadcaster_id, "started_at": rfc3339(started_at), "first": first})
-        return data.get("data", [])
 
 
 def _link_view(label: str, url: str) -> discord.ui.View:
@@ -118,7 +115,7 @@ def _link_view(label: str, url: str) -> discord.ui.View:
 class Twitch(commands.Cog):
     twitch_group = app_commands.Group(
         name="twitch",
-        description="Outils Twitch (annonces de live, clips)",
+        description="Outils Twitch (annonces de live)",
         guild_only=True,
         default_permissions=discord.Permissions(manage_guild=True),
     )
@@ -145,11 +142,9 @@ class Twitch(commands.Cog):
         self.state = json.loads(raw) if raw else {}
         await self.client.start()
         self.live_loop.start()
-        self.clips_loop.start()
 
     async def cog_unload(self) -> None:
         self.live_loop.cancel()
-        self.clips_loop.cancel()
         await self.client.close()
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -352,63 +347,6 @@ class Twitch(commands.Cog):
         await self._save_state()
         log.info("Live terminé, annonce clôturée.")
 
-    # ------------------------------------------------------------------ clips
-
-    @tasks.loop(minutes=cfg.TWITCH_CLIPS_POLL_MINUTES)
-    async def clips_loop(self) -> None:
-        try:
-            await self._check_clips()
-        except TwitchAPIError as exc:
-            log.warning("Twitch (clips) : %s", exc)
-        except Exception:
-            log.exception("Erreur inattendue pendant la recherche de clips")
-
-    @clips_loop.before_loop
-    async def _before_clips(self) -> None:
-        await self.bot.wait_until_ready()
-
-    async def _check_clips(self) -> None:
-        channel = self.bot.channel_setting("clips")  # type: ignore[attr-defined]
-        if channel is None:
-            return
-        user = await self._get_user()
-        if not user:
-            return
-
-        now = utcnow()
-        last = self.state.get("clips_checked_at")
-        if not last:
-            # Première activation : on commence à partir de maintenant (pas de rafale d'anciens clips)
-            self.state["clips_checked_at"] = now.isoformat(timespec="seconds")
-            await self._save_state()
-            return
-
-        since = max(parse_iso(last) - timedelta(minutes=5), now - timedelta(hours=24))
-        clips = await self.client.get_clips(user["id"], since)
-        clips.sort(key=lambda c: c["created_at"])
-        for clip in clips:
-            if await self.bot.db.clip_posted(clip["id"]):  # type: ignore[attr-defined]
-                continue
-            text = (
-                f"🎬 **{discord.utils.escape_markdown(truncate(clip.get('title') or 'Sans titre', 150))}** — "
-                f"clippé par **{discord.utils.escape_markdown(clip.get('creator_name') or 'quelqu’un')}**\n{clip['url']}"
-            )
-            try:
-                sent = await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
-            except discord.HTTPException as exc:
-                log.warning("Impossible de poster un clip : %s", exc)
-                return  # on réessaiera au prochain passage (le clip n'est pas marqué comme posté)
-            await self.bot.db.mark_clip_posted(clip["id"])  # type: ignore[attr-defined]
-            for emoji in ("🔥", "😂"):
-                try:
-                    await sent.add_reaction(emoji)
-                except discord.HTTPException:
-                    break
-            await asyncio.sleep(1)
-
-        self.state["clips_checked_at"] = now.isoformat(timespec="seconds")
-        await self._save_state()
-
     # ------------------------------------------------------------------ commandes
 
     @twitch_group.command(name="statut", description="Vérifie la connexion à Twitch et l'état des annonces")
@@ -430,11 +368,9 @@ class Twitch(commands.Cog):
             lines.append(f"❌ {exc}")
 
         annonces = self.bot.channel_setting("annonces")  # type: ignore[attr-defined]
-        clips = self.bot.channel_setting("clips")  # type: ignore[attr-defined]
         role = self.bot.role_setting("notif_live")  # type: ignore[attr-defined]
         lines.append(f"📢 Salon des annonces : {annonces.mention if annonces else '⚠️ non défini (/config salon)'}")
         lines.append(f"🔔 Rôle pingé : {role.mention if role else '⚠️ non défini (/config role)'}")
-        lines.append(f"🎬 Salon des clips : {clips.mention if clips else 'non défini (clips désactivés)'}")
         if self.state.get("stream_id"):
             lines.append("📌 Une annonce de live est en cours de suivi.")
         await interaction.followup.send("\n".join(lines), ephemeral=True)

@@ -15,7 +15,6 @@ log = logging.getLogger(__name__)
 
 CHANNEL_LABELS = {
     "annonces": "Annonces de live",
-    "clips": "Clips Twitch",
     "bienvenue": "Messages de bienvenue",
     "logs": "Logs du serveur (modération)",
     "idees": "Idées (/idee)",
@@ -32,7 +31,6 @@ ROLE_LABELS = {
 
 # Permissions supplémentaires que le bot doit avoir dans certains salons
 CHANNEL_EXTRA_PERMS = {
-    "clips": {"add_reactions": "ajouter des réactions"},
     "idees": {"add_reactions": "ajouter des réactions", "create_public_threads": "créer des fils"},
 }
 

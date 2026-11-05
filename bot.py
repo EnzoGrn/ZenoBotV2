@@ -100,7 +100,7 @@ class ZenoBot(commands.Bot):
         await self.db.connect()
         for extension in EXTENSIONS:
             if extension == "cogs.twitch" and not self.settings.twitch_enabled:
-                log.warning("Clés Twitch absentes : annonces de live et clips désactivés.")
+                log.warning("Clés Twitch absentes : annonces de live désactivées.")
                 continue
             await self.load_extension(extension)
 
