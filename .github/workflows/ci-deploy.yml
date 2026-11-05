@@ -1,0 +1,96 @@
+name: Tests et déploiement
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:      # bouton « Run workflow » pour redéployer à la main
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: /opt/zenobot   # dossier du bot sur le VPS
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # mets la même version majeure que celle de ton VPS (python3 --version)
+          cache: pip
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Vérifier la syntaxe
+        run: python -m compileall -q bot.py config.py database.py utils.py cogs
+
+      - name: Tests du bot
+        run: python tests/test_bot.py
+
+      - name: Tests des scripts de déploiement
+        run: bash tests/test_deploy.sh
+
+  deploy:
+    name: Déploiement sur le VPS
+    needs: tests
+    # jamais sur une pull request, uniquement depuis la branche main
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false   # deux déploiements ne se chevauchent jamais
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la connexion SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST_KEY: ${{ secrets.VPS_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          for name in VPS_HOST VPS_USER VPS_SSH_KEY VPS_HOST_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Le secret $name est vide ou absent (Settings > Secrets and variables > Actions)."
+              exit 1
+            fi
+          done
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$VPS_HOST_KEY" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName ${VPS_HOST}
+            User ${VPS_USER}
+            Port ${VPS_PORT:-22}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 15
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Sauvegarder la version en production
+        run: ssh vps "APP_DIR='$APP_DIR' bash -s" < deploy/backup.sh
+
+      - name: Envoyer le code
+        run: |
+          rsync -rlz --delete \
+            --rsync-path="umask 002 && rsync" \
+            --exclude='.git/' --exclude='.github/' --exclude='tests/' \
+            --exclude='.env' --exclude='venv/' --exclude='data/' --exclude='.deploy/' \
+            --exclude='__pycache__/' --exclude='*.pyc' \
+            ./ "vps:${APP_DIR}/"
+
+      - name: Installer, redémarrer et vérifier
+        run: ssh vps "APP_DIR='$APP_DIR' bash -s" < deploy/post_deploy.sh

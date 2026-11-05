@@ -1,0 +1,28 @@
+# Service systemd : lance le bot au démarrage du VPS et le relance en cas de plantage.
+# Installation : voir README.md (étape 6). Adapte User et les chemins si tu n'utilises pas /opt/zenobot.
+
+[Unit]
+Description=Bot Discord ZenoSurTwitch_
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zenobot
+Group=zenobot
+WorkingDirectory=/opt/zenobot
+ExecStart=/opt/zenobot/venv/bin/python bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Durcissement : le bot ne peut écrire que dans son dossier de données
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/zenobot/data
+
+[Install]
+WantedBy=multi-user.target
