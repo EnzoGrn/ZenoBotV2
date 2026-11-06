@@ -28,7 +28,7 @@ Droits par défaut, modifiables dans *Paramètres du serveur → Intégrations*.
 | `/timeout` `untimeout` | Exclure des membres | Exclusion temporaire (`10m`, `2h`, `1j`, `1h30m`) |
 | `/kick` `ban` `unban` | Expulser / Bannir | Sanctions |
 | `/purge` | Gérer les messages | Suppression de messages récents |
-| `/niveau` `top` | Tous | Niveau, classement |
+| `/rank [membre]` `top` | Tous | Rang, niveau, XP, classement (les siens ou ceux d'un membre) |
 | `/xp ajouter` `reset` `synchroniser` | Gérer le serveur | Correction d'XP, resynchronisation des rangs |
 | `/sondage` | Gérer les messages | Sondage (2 à 5 choix) |
 | `/idee` | Tous | Proposer une idée |

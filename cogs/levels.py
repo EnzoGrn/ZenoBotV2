@@ -51,14 +51,21 @@ class Levels(commands.Cog):
         old_xp, new_xp = await self.bot.db.add_xp(member.id, gain, count_message=True)
         old_level, new_level = level_from_xp(old_xp).level, level_from_xp(new_xp).level
         if new_level > old_level:
-            await self._level_up(member, new_level, message.channel)
+            await self._level_up(member, old_level, new_level, message.channel)
 
-    async def _level_up(self, member: discord.Member, level: int, fallback_channel: discord.abc.Messageable) -> None:
+    async def _level_up(
+        self, member: discord.Member, old_level: int, level: int, fallback_channel: discord.abc.Messageable
+    ) -> None:
+        """Synchronise les rangs ; n'annonce que les changements de rang (pas chaque niveau)."""
+        await self.sync_rewards(member, level)
+        rewards = await self.bot.db.list_rewards()
+        crossed = [r for r in rewards if old_level < r["level"] <= level]
+        if not crossed:
+            return
+        role = member.guild.get_role(crossed[-1]["role_id"])
+        rank_name = role.name if role else f"niveau {crossed[-1]['level']}"
         channel = self.bot.channel_setting("niveaux") or fallback_channel
-        given, _ = await self.sync_rewards(member, level)
-        text = f"🎉 {member.mention} passe **niveau {level}** !"
-        if given:
-            text += f" Nouveau rang : **{given[-1].name}**"
+        text = f"🎉 {member.mention} passe **{rank_name}** (niveau {level}) !"
         try:
             await channel.send(text, allowed_mentions=discord.AllowedMentions(users=[member]))
         except discord.HTTPException:
@@ -99,10 +106,10 @@ class Levels(commands.Cog):
 
     # ------------------------------------------------------------------ commandes
 
-    @app_commands.command(name="niveau", description="Affiche ton niveau (ou celui d'un autre membre)")
+    @app_commands.command(name="rank", description="Affiche ton rang et tes stats (ou celles d'un autre membre)")
     @app_commands.describe(membre="Le membre (toi par défaut)")
     @app_commands.guild_only()
-    async def niveau(self, interaction: discord.Interaction, membre: Optional[discord.Member] = None) -> None:
+    async def rank(self, interaction: discord.Interaction, membre: Optional[discord.Member] = None) -> None:
         target = membre or interaction.user
         row = await self.bot.db.get_xp(target.id)
         if row is None or row["xp"] == 0:
@@ -111,11 +118,23 @@ class Levels(commands.Cog):
             return
         info = level_from_xp(row["xp"])
         rank = await self.bot.db.get_rank(target.id)
+        rewards = await self.bot.db.list_rewards()
+        current = [r for r in rewards if r["level"] <= info.level]
+        upcoming = [r for r in rewards if r["level"] > info.level]
+
+        def role_name(reward) -> str:
+            role = interaction.guild.get_role(reward["role_id"])  # type: ignore[union-attr]
+            return role.name if role else f"niveau {reward['level']}"
+
         embed = discord.Embed(title=target.display_name, color=COLOR_INFO)
         embed.set_thumbnail(url=target.display_avatar.url)
+        embed.add_field(name="Rang", value=role_name(current[-1]) if current else "Aucun rang")
         embed.add_field(name="Niveau", value=str(info.level))
         embed.add_field(name="Classement", value=f"#{rank}")
         embed.add_field(name="Messages", value=str(row["messages"]))
+        embed.add_field(name="XP total", value=str(row["xp"]))
+        if upcoming:
+            embed.add_field(name="Prochain rang", value=f"{role_name(upcoming[0])} (niveau {upcoming[0]['level']})")
         embed.add_field(
             name=f"Progression vers le niveau {info.level + 1}",
             value=f"{progress_bar(info.xp_into_level, info.xp_needed)}  {info.xp_into_level} / {info.xp_needed} XP",
@@ -150,7 +169,7 @@ class Levels(commands.Cog):
     # ------------------------------------------------------------------ gestion staff
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # Ne concerne que le groupe /xp (les commandes /niveau et /top sont publiques)
+        # Ne concerne que le groupe /xp (les commandes /rank et /top sont publiques)
         command = interaction.command
         if command is not None and command.qualified_name.startswith("xp "):
             if not interaction.user.guild_permissions.manage_guild:  # type: ignore[union-attr]

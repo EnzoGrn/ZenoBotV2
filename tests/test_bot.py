@@ -16,6 +16,7 @@ from aiohttp import web
 
 import config as cfg
 import utils
+from utils import level_from_xp
 from bot import ZenoBot
 from config import ConfigError, Settings, load_settings
 from database import Database
@@ -205,7 +206,7 @@ async def test_tree(tmp: Path):
         assert 1 <= len(payload["description"]) <= 100, cmd.name
         total += 1 + len(payload.get("options", [])) * 0
     expected = {"config", "roles", "xp", "twitch", "warn", "warns", "unwarn", "clearwarns", "timeout", "untimeout",
-                "kick", "ban", "unban", "purge", "niveau", "top", "sondage", "idee", "idee-statut", "cherche-joueurs"}
+                "kick", "ban", "unban", "purge", "rank", "top", "sondage", "idee", "idee-statut", "cherche-joueurs"}
     assert set(names) == expected, set(names) ^ expected
     assert len(cmds) <= 100
     # sous-commandes
@@ -435,6 +436,7 @@ class FakeMember(discord.Member):
     guild_permissions = property(lambda s: discord.Permissions(manage_messages=s._staff))
     roles = property(lambda s: s._roles)
     display_name = property(lambda s: f"user{s._uid}")
+    display_avatar = property(lambda s: SimpleNamespace(url="https://a/x.png"))
     async def timeout(self, d, *, reason=None): self.timed_out = d
 
 
@@ -639,10 +641,35 @@ async def test_extras(tmp: Path):
     assert await bot.db.get_xp(20) is None
     await lv.award_xp(FakeMessage(mem, "un vrai message", ch))
     assert (await bot.db.get_xp(20))["xp"] == 100
-    assert ch.sent and "niveau 1" in ch.sent[0] and mem.added == [role]
+    assert ch.sent and "Débutant" in ch.sent[0] and "niveau 1" in ch.sent[0] and mem.added == [role]
     await lv.award_xp(FakeMessage(mem, "un autre message", ch))        # cooldown
     assert (await bot.db.get_xp(20))["xp"] == 100 and len(ch.sent) == 1
     ok("niveaux : XP, anti-abus (cooldown, messages courts), montée de niveau + rôle")
+
+    # un niveau sans nouveau rang n'est pas annoncé
+    mem2 = FakeMember(21); mem2.guild = guild
+    async def add2(r, reason=None): mem2._roles.append(r)
+    async def rem2(r, reason=None): mem2._roles.remove(r)
+    mem2.add_roles, mem2.remove_roles = add2, rem2
+    await bot.db.add_xp(21, 400)                                        # niveau 2
+    ch2 = FakeTextChannel()
+    await lv.award_xp(FakeMessage(mem2, "un vrai message", ch2))        # +100 -> niveau 3, pas de palier franchi
+    assert level_from_xp((await bot.db.get_xp(21))["xp"]).level == 3 and ch2.sent == []
+    ok("niveaux : seuls les changements de rang sont annoncés")
+
+    # /rank : rang, niveau, prochain rang
+    await bot.db.set_reward(5, 901)
+    guild.get_role = lambda rid: {900: role, 901: SimpleNamespace(id=901, name="Actif", is_assignable=lambda: True)}.get(rid)
+    itx_rank = FakeInteraction(FakeMember(99)); itx_rank.guild = guild
+    await lv.rank.callback(lv, itx_rank, mem)
+    embed = itx_rank.response.calls[0][2]["embed"]
+    f = {x.name: x.value for x in embed.fields}
+    assert f["Rang"] == "Débutant" and f["Niveau"] == "1" and "Actif" in f["Prochain rang"] and f["XP total"] == "100"
+    itx_none = FakeInteraction(FakeMember(98)); itx_none.guild = guild
+    await lv.rank.callback(lv, itx_none, None)
+    assert "pas encore d'XP" in itx_none.response.calls[0][1][0]
+    await bot.db.remove_reward(5)
+    ok("/rank : rang, niveau, prochain rang, membre sans XP")
 
     # échelle de rangs : un seul rang (remplacer), retrait si l'XP baisse, mode cumuler
     assert [l for l, _, _ in cfg.LEVEL_LADDER] == [10, 20, 25, 30, 40, 50, 60, 70, 80, 90]
@@ -669,15 +696,15 @@ async def test_extras(tmp: Path):
     await bot.db.delete_setting("levels.mode")
     ok("rangs : un seul à la fois, abaissement, rien avant le niveau 10, mode cumuler")
 
-    # /xp réservé au staff, /niveau public
-    cmd_xp, cmd_niv = SimpleNamespace(qualified_name="xp reset"), SimpleNamespace(qualified_name="niveau")
+    # /xp réservé au staff, /rank public
+    cmd_xp, cmd_niv = SimpleNamespace(qualified_name="xp reset"), SimpleNamespace(qualified_name="rank")
     plain = FakeMember(30)
     assert await lv.interaction_check(FakeInteraction(plain, command=cmd_niv)) is True
     try:
         await lv.interaction_check(FakeInteraction(plain, command=cmd_xp)); raise AssertionError
     except discord.app_commands.MissingPermissions:
         pass
-    ok("/xp réservé au staff, /niveau public")
+    ok("/xp réservé au staff, /rank public")
 
     # accueil
     member = SimpleNamespace(mention="<@5>", guild=SimpleNamespace(name="Chez Zeno", member_count=42))
