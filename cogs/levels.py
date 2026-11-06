@@ -11,11 +11,64 @@ from discord import app_commands
 from discord.ext import commands
 
 import config as cfg
-from utils import COLOR_INFO, level_from_xp, progress_bar
+from utils import COLOR_INFO, level_from_xp, progress_bar, truncate
 
 log = logging.getLogger(__name__)
 
-MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+LEADERBOARD_PAGE_SIZE = 10
+
+
+class LeaderboardView(discord.ui.View):
+    """Boutons du classement : précédent, suivant, « ma page ». Réservés à l'auteur de la commande."""
+
+    def __init__(self, cog: "Levels", owner_id: int, page: int, pages: int):
+        super().__init__(timeout=300)
+        self.cog, self.owner_id, self.page, self.pages = cog, owner_id, page, pages
+        self.message: Optional[discord.Message] = None
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        self.previous.disabled = self.page <= 1
+        self.next.disabled = self.page >= self.pages
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Ce classement est celui de quelqu'un d'autre : lance `/top` pour avoir le tien.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _show(self, interaction: discord.Interaction, page: int) -> None:
+        embed, self.pages = await self.cog.leaderboard_embed(interaction.guild, page, self.owner_id)  # type: ignore[arg-type]
+        self.page = min(max(page, 1), self.pages)
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._show(interaction, self.page - 1)
+
+    @discord.ui.button(label="📍 Ma page", style=discord.ButtonStyle.primary)
+    async def mine(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        rank = await self.cog.bot.db.get_rank(self.owner_id)
+        if not rank:
+            await interaction.response.send_message("Tu n'as pas encore d'XP : discute un peu ! 💬", ephemeral=True)
+            return
+        await self._show(interaction, (rank - 1) // LEADERBOARD_PAGE_SIZE + 1)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._show(interaction, self.page + 1)
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            child.disabled = True  # type: ignore[union-attr]
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 class Levels(commands.Cog):
@@ -126,7 +179,12 @@ class Levels(commands.Cog):
             role = interaction.guild.get_role(reward["role_id"])  # type: ignore[union-attr]
             return role.name if role else f"niveau {reward['level']}"
 
-        embed = discord.Embed(title=target.display_name, color=COLOR_INFO)
+        color = COLOR_INFO
+        if current:
+            rank_role = interaction.guild.get_role(current[-1]["role_id"])  # type: ignore[union-attr]
+            if rank_role is not None and rank_role.colour.value:
+                color = rank_role.colour.value
+        embed = discord.Embed(title=target.display_name, color=color)
         embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(name="Rang", value=role_name(current[-1]) if current else "Aucun rang")
         embed.add_field(name="Niveau", value=str(info.level))
@@ -142,29 +200,50 @@ class Levels(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="top", description="Classement des membres les plus actifs")
-    @app_commands.describe(page="Numéro de page")
-    @app_commands.guild_only()
-    async def top(self, interaction: discord.Interaction, page: app_commands.Range[int, 1, 1000] = 1) -> None:
-        per_page = 10
+    async def leaderboard_embed(self, guild: discord.Guild, page: int, viewer_id: int) -> tuple[discord.Embed, int]:
+        """Construit la page `page` du classement ; la ligne du spectateur est surlignée (bloc « diff » : vert)."""
+        per_page = LEADERBOARD_PAGE_SIZE
         total = await self.bot.db.count_ranked()
-        if total == 0:
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = min(max(page, 1), pages)
+        first = (page - 1) * per_page + 1
+        rows = await self.bot.db.top_xp(per_page, first - 1)
+
+        lines = []
+        for i, row in enumerate(rows, start=first):
+            member = guild.get_member(row["user_id"])
+            name = (member.display_name if member else "ancien membre").replace("`", "'")
+            name = truncate(name, 16).ljust(16)
+            info = level_from_xp(row["xp"])
+            pct = 100 * info.xp_into_level / info.xp_needed
+            mark = "+" if row["user_id"] == viewer_id else " "
+            lines.append(f"{mark}{i:>3}. {name} niv {info.level:<3} {pct:3.0f}% {row['xp']:>8}")
+        embed = discord.Embed(
+            title="🏆 Classement",
+            description="```diff\n" + "\n".join(lines) + "\n```",
+            color=COLOR_INFO,
+        )
+        mine = await self.bot.db.get_rank(viewer_id)
+        footer = f"Page {page}/{pages}"
+        if mine:
+            footer += f" · Ta position : #{mine}"
+        embed.set_footer(text=footer)
+        return embed, pages
+
+    @app_commands.command(name="top", description="Classement des membres les plus actifs")
+    @app_commands.describe(page="Numéro de page (par défaut : celle où tu te trouves)")
+    @app_commands.guild_only()
+    async def top(self, interaction: discord.Interaction, page: Optional[app_commands.Range[int, 1, 1000]] = None) -> None:
+        if await self.bot.db.count_ranked() == 0:
             await interaction.response.send_message("Personne n'a encore d'XP.", ephemeral=True)
             return
-        pages = (total + per_page - 1) // per_page
-        if page > pages:
-            await interaction.response.send_message(f"Il n'y a que {pages} page(s).", ephemeral=True)
-            return
-
-        rows = await self.bot.db.top_xp(per_page, (page - 1) * per_page)
-        lines = []
-        for i, row in enumerate(rows, start=(page - 1) * per_page + 1):
-            member = interaction.guild.get_member(row["user_id"])  # type: ignore[union-attr]
-            name = discord.utils.escape_markdown(member.display_name) if member else "*ancien membre*"
-            lines.append(f"{MEDALS.get(i, f'`{i}.`')} **{name}** — niveau {level_from_xp(row['xp']).level} ({row['xp']} XP)")
-        embed = discord.Embed(title="🏆 Classement", description="\n".join(lines), color=COLOR_INFO)
-        embed.set_footer(text=f"Page {page}/{pages}")
-        await interaction.response.send_message(embed=embed)
+        if page is None:
+            mine = await self.bot.db.get_rank(interaction.user.id)
+            page = (mine - 1) // LEADERBOARD_PAGE_SIZE + 1 if mine else 1
+        embed, pages = await self.leaderboard_embed(interaction.guild, page, interaction.user.id)  # type: ignore[arg-type]
+        view = LeaderboardView(self, interaction.user.id, min(page, pages), pages)
+        await interaction.response.send_message(embed=embed, view=view)
+        view.message = await interaction.original_response()
 
     # ------------------------------------------------------------------ gestion staff
 

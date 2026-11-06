@@ -206,7 +206,7 @@ async def test_tree(tmp: Path):
         assert 1 <= len(payload["description"]) <= 100, cmd.name
         total += 1 + len(payload.get("options", [])) * 0
     expected = {"config", "roles", "xp", "twitch", "warn", "warns", "unwarn", "clearwarns", "timeout", "untimeout",
-                "kick", "ban", "unban", "purge", "rank", "top", "sondage", "idee", "idee-statut", "cherche-joueurs"}
+                "kick", "ban", "unban", "purge", "rank", "top", "ping", "sondage", "idee", "idee-statut", "cherche-joueurs"}
     assert set(names) == expected, set(names) ^ expected
     assert len(cmds) <= 100
     # sous-commandes
@@ -629,7 +629,7 @@ async def test_extras(tmp: Path):
     # niveaux : gain d'XP, cooldown, message court, récompense
     cfg.XP_MIN = cfg.XP_MAX = 100
     lv = levels.Levels(bot)
-    role = SimpleNamespace(id=900, name="Débutant", is_assignable=lambda: True)
+    role = SimpleNamespace(id=900, name="Débutant", colour=SimpleNamespace(value=0x9AA5B1), is_assignable=lambda: True)
     guild = SimpleNamespace(get_role=lambda rid: role if rid == 900 else None)
     mem = FakeMember(20); mem.guild = guild; mem.added = []
     async def add_roles(r, reason=None): mem._roles.append(r); mem.added.append(r)
@@ -668,8 +668,47 @@ async def test_extras(tmp: Path):
     itx_none = FakeInteraction(FakeMember(98)); itx_none.guild = guild
     await lv.rank.callback(lv, itx_none, None)
     assert "pas encore d'XP" in itx_none.response.calls[0][1][0]
+    assert embed.colour.value == 0x9AA5B1                              # liseré = couleur du rôle de rang
     await bot.db.remove_reward(5)
     ok("/rank : rang, niveau, prochain rang, membre sans XP")
+
+    # /top : pages, ligne surlignée, bouton « ma page », boutons réservés à l'auteur
+    from cogs.levels import LeaderboardView
+    for uid in range(300, 325):
+        await bot.db.add_xp(uid, 1000 + uid)                          # 25 membres classés au-dessus des autres
+    members = {uid: FakeMember(uid) for uid in range(300, 325)}
+    guild.get_member = lambda uid: members.get(uid)
+    viewer = 305                                                       # rang 20 (XP 1305 : 20e en partant du haut)
+    rank_v = await bot.db.get_rank(viewer)
+    e1, pages = await lv.leaderboard_embed(guild, 1, viewer)
+    assert pages == (await bot.db.count_ranked() + 9) // 10 and "```diff" in e1.description
+    e_mine, _ = await lv.leaderboard_embed(guild, (rank_v - 1) // 10 + 1, viewer)
+    marked = [l for l in e_mine.description.splitlines() if l.startswith("+")]
+    assert len(marked) == 1 and f"{rank_v:>3}." in marked[0] and f"#{rank_v}" in e_mine.footer.text
+    assert not any(l.startswith("+") for l in e1.description.splitlines())
+    itx_top = FakeInteraction(FakeMember(viewer)); itx_top.guild = guild
+    async def orig(): return SimpleNamespace(edit=None)
+    itx_top.original_response = orig
+    await lv.top.callback(lv, itx_top, None)                           # sans page : ouvre sur la page du spectateur
+    first = itx_top.response.calls[0][2]
+    assert f"Page {(rank_v - 1) // 10 + 1}/" in first["embed"].footer.text
+    view = LeaderboardView(lv, viewer, 1, pages)
+    assert view.previous.disabled and not view.next.disabled
+    itx_btn = FakeInteraction(FakeMember(viewer)); itx_btn.guild = guild
+    await view.next.callback(itx_btn)
+    assert view.page == 2 and itx_btn.response.calls[0][0] == "edit"
+    await view.mine.callback(itx_btn)
+    assert view.page == (rank_v - 1) // 10 + 1
+    stranger = FakeInteraction(FakeMember(1)); stranger.guild = guild
+    assert await view.interaction_check(stranger) is False and await view.interaction_check(itx_btn) is True
+    ok("/top : pages, ligne surlignée, « ma page », boutons réservés à l'auteur")
+
+    # /ping
+    from cogs.community import Community
+    itx_p = FakeInteraction(FakeMember(1)); itx_p.created_at = utils.utcnow()
+    await Community.ping.callback(SimpleNamespace(bot=SimpleNamespace(latency=0.042)), itx_p)
+    assert "42 ms" in itx_p.response.calls[0][1][0]
+    ok("/ping")
 
     # échelle de rangs : un seul rang (remplacer), retrait si l'XP baisse, mode cumuler
     assert [l for l, _, _ in cfg.LEVEL_LADDER] == [10, 20, 25, 30, 40, 50, 60, 70, 80, 90]

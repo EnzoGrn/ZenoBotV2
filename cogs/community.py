@@ -66,6 +66,14 @@ class Community(commands.Cog):
 
     # ============================================================================ sondages
 
+    @app_commands.command(name="ping", description="Vérifie que le bot répond (latence)")
+    async def ping(self, interaction: discord.Interaction) -> None:
+        gateway = self.bot.latency * 1000
+        reaction = (utcnow() - interaction.created_at).total_seconds() * 1000
+        await interaction.response.send_message(
+            f"🏓 Pong ! Latence Discord `{gateway:.0f} ms` · Temps de réponse `{max(reaction, 0):.0f} ms`", ephemeral=True
+        )
+
     @app_commands.command(name="sondage", description="Crée un sondage (2 à 5 choix)")
     @app_commands.describe(
         question="La question posée",
