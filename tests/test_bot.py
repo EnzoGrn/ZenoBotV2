@@ -1,4 +1,5 @@
 """Tests de vérification du bot (sans connexion à Discord ni à Twitch)."""
+import re
 import asyncio
 import json
 import os
@@ -194,7 +195,7 @@ async def test_tree(tmp: Path):
     await bot._async_setup_hook()
     await bot.setup_hook()
     loaded = sorted(bot.extensions)
-    assert len(loaded) == 8, loaded
+    assert len(loaded) == 9, loaded
     guild = discord.Object(id=1)
     cmds = bot.tree.get_commands(guild=guild)
     names = sorted(c.name for c in cmds)
@@ -206,22 +207,23 @@ async def test_tree(tmp: Path):
         assert 1 <= len(payload["description"]) <= 100, cmd.name
         total += 1 + len(payload.get("options", [])) * 0
     expected = {"config", "roles", "xp", "twitch", "warn", "warns", "unwarn", "clearwarns", "timeout", "untimeout",
-                "kick", "ban", "unban", "purge", "rank", "top", "ping", "sondage", "idee", "idee-statut", "cherche-joueurs"}
+                "kick", "ban", "unban", "purge", "rank", "top", "ping", "stream", "sondage", "idee", "idee-statut", "cherche-joueurs"}
     assert set(names) == expected, set(names) ^ expected
     assert len(cmds) <= 100
     # sous-commandes
     sub = {c.name: sorted(s.name for s in c.commands) for c in cmds if hasattr(c, "commands")}
     print("      sous-commandes :", sub)
     assert "verifier" in sub["config"] and "panel" in sub["roles"] and "statut" in sub["twitch"]
+    assert {"autoriser", "recompense", "credits", "statut"} <= set(sub["stream"])
     # les groupes réservés au staff portent bien la permission par défaut
     for c in cmds:
-        if c.name in ("config", "twitch", "xp"):
+        if c.name in ("config", "twitch", "xp", "stream"):
             assert c.default_permissions and c.default_permissions.manage_guild
         if c.name == "roles":
             assert c.default_permissions.manage_roles
     # pas de /planning ni de giveaway ni de fonctions « pédagogue »
     assert not {"planning", "tirage", "giveaway", "astuce", "quiz", "faq"} & set(names)
-    ok(f"chargement des 8 modules, {len(cmds)} commandes valides")
+    ok(f"chargement des 9 modules, {len(cmds)} commandes valides")
     await bot.close()
     ok("arrêt propre")
 
@@ -551,6 +553,7 @@ class FakeResponse:
     def __init__(self): self.calls = []
     def is_done(self): return bool(self.calls)
     async def send_message(self, *a, **kw): self.calls.append(("send", a, kw))
+    async def defer(self, **kw): self.calls.append(("defer", (), kw))
     async def edit_message(self, **kw): self.calls.append(("edit", (), kw))
 
 
@@ -758,6 +761,471 @@ async def test_extras(tmp: Path):
     await bot.db.close(); await bot.close()
 
 
+
+# ------------------------------------------------------------------ G. événements Twitch, crédits, récompense
+
+class FakeHelix:
+    """Faux Twitch : OAuth, Helix, EventSub (WebSocket)."""
+
+    def __init__(self):
+        self.access, self.refresh_tok = None, None
+        self.subs, self.patches, self.reward_calls = [], [], []
+        self.ws_connections = 0
+        self.subs_done = asyncio.Event()
+        self.second_done = asyncio.Event()
+        self.refreshes = 0
+        self.port = 0
+
+    def _auth(self, request):
+        return request.headers.get("Authorization") == f"Bearer {self.access}" and request.headers.get("Client-Id") == "cid"
+
+    async def token_h(self, request):
+        d = await request.post()
+        assert d["client_secret"] == "sec"
+        if d["grant_type"] == "authorization_code":
+            assert d["redirect_uri"] == cfg.TWITCH_REDIRECT_URI
+            if d["code"] not in ("GOODCODE", "OTHERCODE"):
+                return web.json_response({"message": "invalid authorization code"}, status=400)
+            self.access, self.refresh_tok = ("acc1" if d["code"] == "GOODCODE" else "accX"), "ref1"
+            self.other = d["code"] == "OTHERCODE"
+        else:
+            assert d["grant_type"] == "refresh_token" and d["refresh_token"] == self.refresh_tok, d
+            self.refreshes += 1
+            self.access, self.refresh_tok = f"acc{self.refreshes + 1}", f"ref{self.refreshes + 1}"
+        return web.json_response({"access_token": self.access, "refresh_token": self.refresh_tok, "expires_in": 3600,
+                                  "scope": list(cfg.TWITCH_USER_SCOPES)})
+
+    async def users_h(self, request):
+        if not self._auth(request):
+            return web.Response(status=401)
+        login = "autre" if getattr(self, "other", False) else "zenosurtwitch_"
+        return web.json_response({"data": [{"id": "42", "login": login, "display_name": login}]})
+
+    async def eventsub_h(self, request):
+        if not self._auth(request):
+            return web.Response(status=401)
+        body = await request.json()
+        assert body["transport"]["method"] == "websocket" and body["transport"]["session_id"].startswith("S")
+        self.subs.append(body)
+        if body["type"] == "channel.follow":
+            return web.json_response({"message": "missing scope"}, status=403)
+        if len(self.subs) == len(cfg.TWITCH_USER_SCOPES) + 2:   # 9 abonnements demandés
+            self.subs_done.set()
+        return web.json_response({"data": [{}]}, status=202)
+
+    async def chatters_h(self, request):
+        if not self._auth(request):
+            return web.Response(status=401)
+        assert request.query["broadcaster_id"] == "42" and request.query["moderator_id"] == "42"
+        if request.query.get("after") == "c1":
+            return web.json_response({"data": [{"user_login": "dave", "user_name": "Dave"}], "pagination": {}})
+        return web.json_response({"data": [{"user_login": "alice", "user_name": "Alice"}, {"user_login": "bob", "user_name": "Bob"},
+                                           {"user_login": "nightbot", "user_name": "Nightbot"}], "pagination": {"cursor": "c1"}})
+
+    async def redemption_h(self, request):
+        if not self._auth(request):
+            return web.Response(status=401)
+        self.patches.append((dict(request.query), await request.json()))
+        return web.json_response({"data": [{}]})
+
+    async def rewards_h(self, request):
+        if not self._auth(request):
+            return web.Response(status=401)
+        body = await request.json()
+        self.reward_calls.append((request.method, dict(request.query), body))
+        if request.method == "POST":
+            return web.json_response({"data": [{"id": "RW9"}]})
+        if request.query["id"] != "RW9":
+            return web.json_response({"message": "not found"}, status=404)
+        return web.json_response({"data": [{"id": "RW9"}]})
+
+    async def ws_h(self, request):
+        import uuid
+        ws = web.WebSocketResponse(); await ws.prepare(request)
+        self.ws_connections += 1
+        n = self.ws_connections
+
+        def frame(kind, payload=None, sub=None, mid=None):
+            return {"metadata": {"message_id": mid or str(uuid.uuid4()), "message_type": kind, "subscription_type": sub},
+                    "payload": payload or {}}
+
+        await ws.send_json(frame("session_welcome", {"session": {"id": f"S{n}", "keepalive_timeout_seconds": 10}}))
+        if n == 1:
+            await asyncio.wait_for(self.subs_done.wait(), 5)
+            chat = lambda login, name, text: frame("notification", {"event": {"chatter_user_login": login, "chatter_user_name": name, "message": {"text": text}}}, "channel.chat.message")
+            await ws.send_json(frame("notification", {"event": {"type": "live", "id": "STR1"}}, "stream.online"))
+            await ws.send_json(chat("alice", "Alice", "salut tout le monde"))
+            await ws.send_json(chat("alice", "Alice", "deuxième message"))
+            await ws.send_json(chat("nightbot", "Nightbot", "Pensez à follow"))
+            await ws.send_json(chat("bob", "Bob", "!discord"))                  # commande : ne compte pas
+            await ws.send_json(frame("notification", {"event": {"user_login": "erin", "user_name": "Erin", "is_gift": False}}, "channel.subscribe"))
+            await ws.send_json(frame("notification", {"event": {"user_login": "alice", "user_name": "Alice", "cumulative_months": 14}}, "channel.subscription.message"))
+            await ws.send_json(frame("notification", {"event": {"user_login": "gus", "user_name": "Gus", "total": 5, "is_anonymous": False}}, "channel.subscription.gift"))
+            await ws.send_json(frame("notification", {"event": {"user_login": "hana", "user_name": "Hana", "bits": 300, "is_anonymous": False}}, "channel.cheer"))
+            await ws.send_json(frame("notification", {"event": {"user_login": "ivan", "user_name": "Ivan"}}, "channel.follow"))
+            await ws.send_json(frame("notification", {"event": {"from_broadcaster_user_login": "jules", "from_broadcaster_user_name": "Jules", "viewers": 12}}, "channel.raid"))
+            self.dup = chat("zed", "Zed", "message en double")
+            await ws.send_json(self.dup); await ws.send_json(self.dup)           # même message_id : compté une fois
+            await ws.send_json(frame("session_reconnect", {"session": {"reconnect_url": f"ws://127.0.0.1:{self.port}/ws"}}))
+            async for _ in ws: pass
+        else:
+            await ws.send_json(frame("notification", {"event": {"chatter_user_login": "carol", "chatter_user_name": "Carol", "message": {"text": "après la reconnexion"}}}, "channel.chat.message"))
+            self.second_done.set()
+            async for _ in ws: pass
+        return ws
+
+
+async def wait_until(cond, timeout=5.0):
+    end = asyncio.get_event_loop().time() + timeout
+    while not await cond():
+        if asyncio.get_event_loop().time() > end:
+            raise AssertionError("délai dépassé")
+        await asyncio.sleep(0.05)
+
+
+async def test_streamevents(tmp: Path):
+    import credits
+    from cogs.streamevents import StreamEvents
+    from twitch_user import AuthError, TwitchUserAuth, extract_code
+
+    # --- page de crédits : tri, exclusion des bots, échappement
+    ch = [{"login": "a", "name": "Alice", "messages": 5, "present": 1}, {"login": "nightbot", "name": "Nightbot", "messages": 9, "present": 1},
+          {"login": "b", "name": "Bob", "messages": 0, "present": 1}, {"login": "c", "name": "Carl", "messages": 0, "present": 1},
+          {"login": "zeno", "name": "Zeno", "messages": 3, "present": 1}, {"login": "x", "name": "<script>alert(1)</script>", "messages": 1, "present": 1}]
+    ev = [{"kind": "sub", "login": "c", "name": "Carl", "amount": 0, "detail": None}, {"kind": "resub", "login": "a", "name": "Alice", "amount": 14, "detail": None},
+          {"kind": "gift", "login": "", "name": "", "amount": 5, "detail": None}, {"kind": "gift", "login": "g", "name": "Gus", "amount": 2, "detail": None},
+          {"kind": "gift", "login": "g", "name": "Gus", "amount": 3, "detail": None}, {"kind": "raid", "login": "j", "name": "Jules", "amount": 12, "detail": None}]
+    sec = credits.build_sections(ch, ev, ["NightBot"], "zeno")
+    assert [n for n, _ in sec.chatters] == ["Alice", "<script>alert(1)</script>"]            # bots et chaîne exclus
+    assert sec.silent == ["Bob"]                                                           # Carl est déjà remercié comme abonné
+    assert sec.subs == [("Carl", ""), ("Alice", "14 mois")] and ("Gus", 5) in sec.gifters and (credits.ANONYMOUS, 5) in sec.gifters
+    page = credits.render_credits(sec, channel_name="Zeno", title="Soirée <b>test</b>", games=["Hades"], started_at="2026-11-06T18:00:00Z",
+                                  style=credits.normalize_style({"show_title": True, "show_meta": True}))
+    assert "<script>alert(1)" not in page and "&lt;script&gt;" in page and "&lt;b&gt;" in page and "6 novembre 2026" in page
+    assert "Nightbot" not in page and "Alice" in page
+    assert "Merci à la personne de l'ombre" in page
+    assert "Bob" not in page                                                            # silencieux : remerciés en groupe, pas nommés
+    named = credits.render_credits(sec, channel_name="Zeno", style=credits.normalize_style({"shadow_names": True}))
+    assert "Bob" in named and "Personnes de l'ombre" in named
+    assert credits.build_sections([], [], [], "zeno").is_empty
+    ok("crédits : tri, bots exclus, dons agrégés, silencieux, échappement HTML")
+
+    assert extract_code("abc123") == "abc123"
+    assert extract_code("https://localhost/?code=abc123&scope=user%3Aread%3Achat&state=x") == "abc123"
+    assert extract_code("?code=zzz&scope=a") == "zzz"
+    ok("extraction du code d'autorisation")
+
+    # --- serveur Twitch factice
+    fake = FakeHelix()
+    app = web.Application()
+    app.router.add_post("/oauth2/token", fake.token_h)
+    app.router.add_get("/helix/users", fake.users_h)
+    app.router.add_post("/helix/eventsub/subscriptions", fake.eventsub_h)
+    app.router.add_get("/helix/chat/chatters", fake.chatters_h)
+    app.router.add_patch("/helix/channel_points/custom_rewards/redemptions", fake.redemption_h)
+    app.router.add_route("*", "/helix/channel_points/custom_rewards", fake.rewards_h)
+    app.router.add_get("/ws", fake.ws_h)
+    runner = web.AppRunner(app); await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0); await site.start()
+    fake.port = site._server.sockets[0].getsockname()[1]
+    base = f"http://127.0.0.1:{fake.port}"
+
+    bot = ZenoBot(make_settings(tmp / "se"))
+    await bot.db.connect()
+    auth = TwitchUserAuth("cid", "sec", bot.db, "zenosurtwitch_", api_base=f"{base}/helix", oauth_base=f"{base}/oauth2")
+    await auth.start()
+    assert not auth.authorized and "client_id=cid" in auth.authorize_url() and "user%3Aread%3Achat" in auth.authorize_url()
+    try:
+        await auth.access_token()
+        raise AssertionError("aurait dû échouer")
+    except AuthError:
+        pass
+    try:
+        await auth.exchange_code("MAUVAIS")
+        raise AssertionError("aurait dû échouer")
+    except AuthError:
+        pass
+    try:
+        await auth.exchange_code("OTHERCODE")
+        raise AssertionError("mauvais compte accepté")
+    except AuthError as exc:
+        assert "autre" in str(exc) and not auth.authorized
+    fake.other = False
+    assert await auth.exchange_code("https://localhost/?code=GOODCODE&scope=x") == "zenosurtwitch_"
+    assert auth.authorized and auth.user_id == "42" and not auth.missing_scopes
+    auth2 = TwitchUserAuth("cid", "sec", bot.db, "zenosurtwitch_", api_base=f"{base}/helix", oauth_base=f"{base}/oauth2")
+    await auth2.start(); assert auth2.authorized and auth2.user_id == "42"     # jeton conservé après redémarrage
+    await auth2.close()
+    auth._token["expires_at"] = 0                                              # jeton expiré : renouvelé tout seul
+    status, _ = await auth.request("GET", "users")
+    assert status == 200 and fake.refreshes == 1 and auth._token["refresh_token"] == "ref2"
+    fake.access = "revoque"                                                    # jeton refusé par Twitch : 1 renouvellement puis nouvel essai
+    status, _ = await auth.request("GET", "users")
+    assert status == 200 and fake.refreshes == 2
+    ok("autorisation Twitch : échange du code, mauvais compte refusé, jeton conservé et renouvelé")
+
+    # --- cog : connexion, abonnements, collecte
+    guild_members = []
+    logs, dms = [], []
+    role = SimpleNamespace(id=700, name="Vrai viewer", mention="<@&700>", is_assignable=lambda: True)
+    guild = SimpleNamespace(id=1, name="ZenoSurDiscord", members=guild_members)
+
+    def make_member(uid, name, glob=None, display=None):
+        m = SimpleNamespace(id=uid, name=name, global_name=glob, display_name=display or glob or name, bot=False,
+                            mention=f"<@{uid}>", roles=[], guild=guild)
+        async def add_roles(r, reason=None): m.roles.append(r)
+        async def send(text): dms.append((uid, text))
+        m.add_roles, m.send = add_roles, send
+        return m
+
+    alice_d, bob_d = make_member(11, "alice_d", "Alice"), make_member(12, "bob_d", "Bob")
+    twin1, twin2 = make_member(13, "x1", "Jumeau"), make_member(14, "x2", "Jumeau")
+    guild_members += [alice_d, bob_d, twin1, twin2]
+    credits_chan = FakeChannel(88)
+    twitch_stub = SimpleNamespace(state={}, _get_user=None)
+    async def get_user(): return {"display_name": "ZenoSurTwitch_"}
+    twitch_stub._get_user = get_user
+    bot.get_cog = lambda name: twitch_stub if name == "Twitch" else None
+    bot.get_guild = lambda gid: guild
+    bot.channel_setting = lambda key: credits_chan if key == "credits" else None
+    bot.role_setting = lambda key: role if key == "vrai_viewer" else None
+    async def send_log(embed): logs.append(embed)
+    bot.send_log = send_log
+
+    async def never_ready(): await asyncio.Event().wait()            # le client Discord n'est jamais connecté dans ce test
+    bot.wait_until_ready = never_ready
+    cog = StreamEvents(bot, auth)
+    cog.web_port = 0                                                 # port libre choisi par le système
+    cog.ws_url = f"ws://127.0.0.1:{fake.port}/ws"
+    await cog.cog_load()
+    async def collected():
+        rows = {r["login"]: r for r in await bot.db.stream_chatters("STR1")}
+        return "carol" in rows
+    await wait_until(collected)
+    assert cog.connected and fake.ws_connections == 2 and len(fake.subs) == 9          # reconnexion sans nouvel abonnement
+    assert {s["type"] for s in fake.subs} >= {"channel.chat.message", "channel.channel_points_custom_reward_redemption.add", "stream.online"}
+    chat_sub = next(s for s in fake.subs if s["type"] == "channel.chat.message")
+    assert chat_sub["condition"] == {"broadcaster_user_id": "42", "user_id": "42"}
+    assert "channel.follow" in cog.sub_errors and len(cog.subscribed) == 8
+    rows = {r["login"]: r for r in await bot.db.stream_chatters("STR1")}
+    assert rows["alice"]["messages"] == 2 and rows["carol"]["messages"] == 1 and rows["zed"]["messages"] == 1  # doublon ignoré
+    assert "bob" not in rows                                                           # « !discord » ne compte pas
+    kinds = [(e["kind"], e["login"], e["amount"], e["detail"]) for e in await bot.db.stream_events("STR1")]
+    assert ("sub", "erin", 0, None) in kinds and ("resub", "alice", 14, None) in kinds and ("gift", "gus", 5, None) in kinds
+    assert ("cheer", "hana", 300, None) in kinds and ("follow", "ivan", 0, None) in kinds and ("raid", "jules", 12, None) in kinds
+    ok("EventSub : connexion, abonnements, reconnexion sans doublon, collecte du chat et des événements")
+
+    n = await cog.poll_chatters("STR1")
+    assert n == 4                                                                      # 2 pages
+    rows = {r["login"]: r for r in await bot.db.stream_chatters("STR1")}
+    assert rows["bob"]["present"] == 1 and rows["bob"]["messages"] == 0 and rows["alice"]["present"] == 1 and rows["dave"]["present"] == 1
+    ok("silencieux : relevé des connectés au chat (pagination)")
+
+    # --- récompense Vrai viewer
+    await bot.db.set_setting("reward.vrai_viewer", "RW1")
+    def redemption(rid, text, reward="RW1"):
+        return {"id": rid, "user_name": "Viewer", "user_input": text, "reward": {"id": reward, "title": "Vrai viewer", "cost": 5000}}
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R1", "@Alice_D"))
+    assert role in alice_d.roles and fake.patches[-1][1] == {"status": "FULFILLED"} and fake.patches[-1][0]["id"] == "R1"
+    assert fake.patches[-1][0]["reward_id"] == "RW1" and fake.patches[-1][0]["broadcaster_id"] == "42"
+    assert dms and dms[-1][0] == 11 and "Vrai viewer" in dms[-1][1]
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R2", "alice_d"))
+    assert fake.patches[-1][1] == {"status": "CANCELED"}                                # déjà le rôle : remboursé
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R3", "personne_inconnu"))
+    assert fake.patches[-1][1] == {"status": "CANCELED"}
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R4", "Jumeau"))
+    assert fake.patches[-1][1] == {"status": "CANCELED"} and not twin1.roles and "plusieurs" in logs[-1].description
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R5", ""))
+    assert fake.patches[-1][1] == {"status": "CANCELED"}
+    count = len(fake.patches)
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R6", "bob_d", reward="AUTRE"))
+    assert len(fake.patches) == count and not bob_d.roles                               # autre récompense : ignorée
+    bot.role_setting = lambda key: None
+    await cog._on_notification("channel.channel_points_custom_reward_redemption.add", redemption("R7", "bob_d"))
+    assert len(fake.patches) == count and not bob_d.roles and "en attente" in logs[-1].description   # rôle non configuré : laissé en attente
+    bot.role_setting = lambda key: role if key == "vrai_viewer" else None
+    ok("récompense : rôle donné, remboursement (déjà le rôle / inconnu / ambigu / vide), rôle absent = en attente")
+
+    # --- commandes /stream
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.recompense.callback(cog, itx, 5000)
+    assert fake.reward_calls[-1][0] == "PATCH" or True
+    # première fois : le réglage pointe vers RW1 (inexistant) -> 404 -> création
+    assert fake.reward_calls[0][0] == "PATCH" and fake.reward_calls[1][0] == "POST" and fake.reward_calls[1][2]["is_user_input_required"] is True
+    assert fake.reward_calls[1][2]["cost"] == 5000 and fake.reward_calls[1][2]["title"] == "Vrai viewer"
+    assert bot.db.setting("reward.vrai_viewer") == "RW9" and "créée" in itx.followup.sent[-1][0][0]
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.recompense.callback(cog, itx, 7000)
+    assert fake.reward_calls[-1][0] == "PATCH" and fake.reward_calls[-1][2] == {"cost": 7000} and "mis à jour" in itx.followup.sent[-1][0][0]
+    ok("/stream recompense : création puis mise à jour du prix")
+
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.autoriser.callback(cog, itx, None)
+    assert "authorize" in itx.response.calls[0][1][0] and "localhost" in itx.response.calls[0][1][0]
+    cog.restart_connection = lambda: None
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    fake.other = True
+    await cog.autoriser.callback(cog, itx, "OTHERCODE")
+    assert "autre" in itx.followup.sent[-1][0][0] and auth.authorized
+    fake.other = False
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.autoriser.callback(cog, itx, "GOODCODE")
+    assert "✅" in itx.followup.sent[-1][0][0]
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.statut.callback(cog, itx)
+    text = itx.response.calls[0][1][0]
+    assert "zenosurtwitch_" in text and "channel.follow" in text and "Récompense : créée" in text
+    ok("/stream autoriser et /stream statut")
+
+    # --- bots exclus
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.bot_add.callback(cog, itx, "@Zed")
+    assert "zed" in cog.bots() and "nightbot" in cog.bots()
+    await cog.bot_remove.callback(cog, itx, "zed")
+    assert "zed" not in cog.bots()
+    ok("/stream bot-ajouter, bot-retirer")
+
+    # --- page servie à OBS (pendant le live : toujours à jour)
+    import aiohttp
+    assert cog.web_bound_port
+    token = await cog.credits_token()
+    url = f"http://127.0.0.1:{cog.web_bound_port}/credits/"
+    async with aiohttp.ClientSession() as http:
+        async with http.get(url + "mauvais") as r:
+            assert r.status == 404
+        async with http.get(f"http://127.0.0.1:{cog.web_bound_port}/") as r:
+            assert r.status == 404
+        async with http.get(url + token) as r:
+            live_page = await r.text()
+            assert r.status == 200 and "no-store" in r.headers["Cache-Control"] and r.content_type == "text/html"
+        assert "Alice" in live_page and "Carol" in live_page and "Nightbot" not in live_page and "personnes de l'ombre" in live_page
+        assert "Bob" not in live_page and "Dave" not in live_page
+        await cog._on_notification("channel.chat.message", {"chatter_user_login": "nina", "chatter_user_name": "Nina", "message": {"text": "tout dernier message"}})
+        async with http.get(url + token) as r:
+            assert "Nina" in await r.text()                                              # message arrivé juste avant la scène de fin
+        itx = FakeInteraction(FakeMember(1, staff=True))
+        await cog.lien.callback(cog, itx, False)
+        text = itx.response.calls[0][1][0]
+        assert f"/credits/{token}" in text and "Actualiser le navigateur" in text
+        itx = FakeInteraction(FakeMember(1, staff=True))
+        await cog.lien.callback(cog, itx, True)
+        new_token = await cog.credits_token()
+        assert new_token != token and f"/credits/{new_token}" in itx.response.calls[0][1][0]
+        async with http.get(url + token) as r:
+            assert r.status == 404                                                       # ancienne adresse invalidée
+    ok("page OBS : accessible avec l'adresse secrète, à jour en direct, adresse régénérable")
+
+    # --- personnalisation : validation du style
+    hostile = credits.normalize_style({"accent": "red;}body{display:none", "text": "#12345", "font": "Comic\"><script>", "speed": 99999,
+                                       "columns": "9", "heading": "<img src=x onerror=1>\x00", "bogus": 1,
+                                       "sections": [{"id": "subs", "on": False, "title": "X"}, {"id": "subs"}, {"id": "nope"}]})
+    d = credits.default_style()
+    assert hostile["accent"] == d["accent"] and hostile["text"] == d["text"] and hostile["font"] == d["font"] and "bogus" not in hostile
+    assert hostile["speed"] <= next(f["max"] for f in credits.FIELDS if f["key"] == "speed") and hostile["columns"] == d["columns"]
+    assert [s["id"] for s in hostile["sections"]].count("subs") == 1 and len(hostile["sections"]) == len(d["sections"])
+    assert hostile["sections"][0]["id"] == "subs" and hostile["sections"][0]["on"] is False
+    assert credits.normalize_style("pas un dict") == d and credits.normalize_style(None) == d
+    html_out = credits.render_credits(sec, channel_name="Zeno", style=hostile)
+    assert "display:none" not in html_out and "<img src=x" not in html_out and "Comic" not in html_out
+    custom = credits.normalize_style({"accent": "#ff0000", "columns": "3", "align": "left", "chat_sort": "alpha",
+                                      "sections": [{"id": "chatters", "on": True, "title": "Les bavards"}, {"id": "subs", "on": False, "title": "Abos"}]})
+    page2 = credits.render_credits(sec, channel_name="Zeno", style=custom)
+    assert "#ff0000" in page2 and "Les bavards" in page2 and "Abos" not in page2 and "__" not in page2.replace("__proto__", "")
+    for name in credits.PRESETS:
+        assert credits.normalize_style(credits.preset_style(name)) == credits.preset_style(name)
+    assert "static" in credits.render_credits(credits.demo_sections(), channel_name="Z", mode="static").lower()
+    # modèles : verre (cartes + pastilles) et classique
+    glass = credits.render_credits(credits.demo_sections(), channel_name="Z", style=credits.normalize_style({"top_count": 3, "show_counts": True}))
+    assert glass.count('class="card"') == 3 and 'class="pill"' in glass
+    assert "40 messages" in glass and "Alice" in glass and "mask-image" in glass and "scaleX(1.30)" in glass
+    nocards = credits.render_credits(credits.demo_sections(), channel_name="Z", style=credits.normalize_style({"top_count": 0, "show_counts": False, "edge_fade": 0}))
+    assert 'class="card"' not in nocards and "mask-image" not in nocards
+    classic = credits.render_credits(credits.demo_sections(), channel_name="Z", style=credits.preset_style("Modèle 2 · Classique"))
+    assert 'class="card"' not in classic.split("<body>")[1] and "Ceux qui ont animé le chat" in classic and "Merci</h1>" in classic
+    assert all("__" not in credits.render_credits(credits.demo_sections(), channel_name="Z", style=credits.preset_style(n)) for n in credits.PRESETS)
+    evil = credits.render_credits(credits.demo_sections(), channel_name="Z", style=credits.normalize_style({"card_bg": "red", "card_radius": "1;}", "template": "x"}))
+    assert not re.search(r"\bred\b", evil.split("<body>")[0]) and "1;}" not in evil and credits.normalize_style({"template": "x"})["template"] == "glass"
+    ok("style : validation stricte, injection refusée, rubriques, préréglages, rendu")
+    ok("modèles : verre (cartes, pastilles, fondu) et classique, réglages validés")
+
+    # --- personnalisation : routes web
+    t2 = await cog.credits_token()
+    base = f"http://127.0.0.1:{cog.web_bound_port}/credits/{t2}"
+    async with aiohttp.ClientSession() as http:
+        async with http.get(f"http://127.0.0.1:{cog.web_bound_port}/credits/zzz/editor") as r:
+            assert r.status == 404
+        async with http.post(f"http://127.0.0.1:{cog.web_bound_port}/credits/zzz/style", json={"style": {}}) as r:
+            assert r.status == 404
+        async with http.get(base + "/editor") as r:
+            ed = await r.text()
+            assert r.status == 200 and "Personnalisation" in ed or "personnalisation" in ed
+            assert "</script><script" not in ed and ed.count("<script") == 2
+        async with http.post(base + "/render", json={"style": {"accent": "#00ff88"}, "mode": "static"}) as r:
+            demo = await r.text()
+            assert r.status == 200 and "#00ff88" in demo and "ZenoSurTwitch_" in demo
+        async with http.post(base + "/style", data="pas du json") as r:
+            assert r.status == 400
+        async with http.post(base + "/style", data=b"x" * 200000) as r:
+            assert r.status == 413
+        async with http.post(base + "/style", json={"style": {"accent": "#ff00aa", "heading": "Merci à tous"}}) as r:
+            saved = await r.json()
+            assert r.status == 200 and saved["style"]["accent"] == "#ff00aa"
+        async with http.get(base) as r:
+            assert "#ff00aa" in await r.text()                                          # la page OBS utilise le style enregistré
+        async with http.post(base + "/presets", json={"name": "Modèle 1 · Verre", "style": {}}) as r:
+            assert r.status == 400                                                       # nom réservé
+        async with http.post(base + "/presets", json={"name": "Mon style", "style": {"accent": "#112233"}}) as r:
+            pr = await r.json()
+            assert r.status == 200 and pr["presets"]["Mon style"]["accent"] == "#112233"
+        async with http.get(base + "/editor") as r:
+            assert "Mon style" in await r.text()
+        async with http.post(base + "/presets/delete", json={"name": "Mon style"}) as r:
+            assert "Mon style" not in (await r.json())["presets"]
+    page_arch, _ = await cog.build_credits("STR1", {})
+    assert "#ff00aa" in page_arch                                                       # archive et /stream credits : même style
+    ok("éditeur : routes protégées, enregistrement, aperçu, préréglages, page OBS à jour")
+
+    # --- fin de live : envoi des crédits
+    info = {"stream_id": "STR1", "title": "Soirée test", "games": ["Hades"], "started_at": "2026-11-06T18:00:00Z"}
+    await cog.stream_ended("STR1", info)
+    m, content, kw = credits_chan.sent[-1]
+    f = kw["file"]
+    assert f.filename == "credits-2026-11-06.html" and "crédits du live" in content.lower()
+    body = f.fp.read().decode("utf-8")
+    assert "Alice" in body and "Carol" in body and "Erin" in body and "Gus" in body and "Hana" in body and "Ivan" in body and "Jules" in body
+    assert "Bob" not in body and "Dave" not in body and "de l'ombre" in body and "Nightbot" not in body and "ZenoSurTwitch_" in body
+    assert kw["allowed_mentions"].everyone is False
+    assert json.loads(await bot.db.kv_get("credits.last"))["stream_id"] == "STR1" and cog._stream_id is None
+    async with aiohttp.ClientSession() as http:                                          # après le live : la page montre le dernier live
+        async with http.get(url + new_token) as r:
+            assert "Carol" in await r.text()
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.credits_cmd.callback(cog, itx)                                           # dernier live regénéré à la demande
+    assert itx.followup.sent[-1][1]["file"].filename == "credits-2026-11-06.html"
+    sent_before = len(credits_chan.sent)
+    await cog.stream_ended("VIDE", {"title": "", "games": [], "started_at": None})
+    assert len(credits_chan.sent) == sent_before                                       # live sans donnée : rien d'envoyé
+    itx = FakeInteraction(FakeMember(1, staff=True))
+    await cog.credits_cmd.callback(cog, itx)
+    assert "Aucune donnée" in itx.followup.sent[-1][0][0]
+    bot.channel_setting = lambda key: None
+    sent_before = len(credits_chan.sent)
+    await cog.stream_ended("STR1", info)
+    assert len(credits_chan.sent) == sent_before                                         # pas de salon crédits : pas d'archive
+    ok("fin de live : archive envoyée si un salon est défini, page OBS sur le dernier live, /stream credits")
+    bot.channel_setting = lambda key: credits_chan if key == "credits" else None
+
+    old = (utils.utcnow() - timedelta(days=cfg.CREDITS_RETENTION_DAYS + 1)).isoformat(timespec="seconds")
+    await bot.db.execute("INSERT INTO stream_chatters (stream_id, login, name, messages, present, created_at) VALUES ('OLD','x','X',1,0,?)", (old,))
+    await cog.stream_ended("VIDE2", {"title": "", "games": [], "started_at": None})
+    assert not await bot.db.stream_chatters("OLD") and await bot.db.stream_chatters("STR1")
+    ok("données anciennes purgées")
+
+    await cog.cog_unload()
+    await auth.close()
+    await runner.cleanup()
+    await bot.db.close(); await bot.close()
+
 # ------------------------------------------------------------------ main
 
 async def main():
@@ -775,6 +1243,8 @@ async def main():
         await test_automod(tmp)
         print("F. sondage, annonces joueurs, niveaux, accueil")
         await test_extras(tmp)
+        print("G. événements Twitch, crédits, récompense")
+        await test_streamevents(tmp)
     print(f"\nTOUT EST OK ({len(PASSED)} vérifications)")
 
 

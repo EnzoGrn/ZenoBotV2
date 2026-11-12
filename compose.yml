@@ -14,6 +14,9 @@ services:
       # Base de données (réglages, XP, avertissements...) : le dossier data/ du VPS.
       # Il doit appartenir à l'utilisateur 10001 (voir deploy/setup-server.sh).
       - ./data:/app/data
+    # Page de crédits lue par OBS (source navigateur). Retirer ces deux lignes pour la désactiver.
+    ports:
+      - "8080:8080"
     # Durcissement : système de fichiers en lecture seule, aucun privilège
     read_only: true
     tmpfs:

@@ -7,6 +7,8 @@ Bot Discord de la communauté ZenoSurTwitch_. Python 3.12, discord.py, SQLite, d
 | Fonction | Détail |
 |---|---|
 | Annonces de live | Embed (titre, jeu, miniature) et ping @everyone au lancement du stream. Mis à jour si le titre ou le jeu change, supprimé (ping compris) à la fin du live. Une reprise en moins de 10 min republie une annonce sans ping. Le bot doit avoir « Mentionner @everyone » et « Gérer les messages » dans le salon d'annonces. |
+| Crédits de fin de live | Pendant le live, le bot note qui écrit, qui s'abonne, offre des abonnements, envoie des bits, suit ou raide, et relève chaque minute les personnes connectées au chat (les silencieux, remerciés en groupe comme « personnes de l'ombre »). Les bots sont exclus. Une page web, toujours à jour, est lue par OBS dans la scène de fin. |
+| Récompense « Vrai viewer » | Récompense de points de chaîne : le viewer écrit son pseudo Discord, le bot lui donne le rôle et valide la récompense. Pseudo introuvable ou rôle déjà possédé : points remboursés. |
 | Accueil | Message de bienvenue personnalisable, rôle d'arrivée. Attend la validation des règles si le serveur en a une. |
 | Rôles à boutons | Message avec boutons pour prendre ou retirer des rôles. Boutons persistants. |
 | Modération | Filtre de liens par liste blanche, blocage des invitations, anti-spam, avertissements, exclusions, kick, ban, purge, salon de logs. |
@@ -23,6 +25,7 @@ Droits par défaut, modifiables dans *Paramètres du serveur → Intégrations*.
 | `/config afficher` | Gérer le serveur | Configuration actuelle |
 | `/config verifier` | Gérer le serveur | Diagnostic : permissions, rôles, salons |
 | `/twitch statut` `test` | Gérer le serveur | État de la connexion Twitch, aperçu d'annonce |
+| `/stream autoriser` `statut` `recompense` `lien` `credits` `bots` `bot-ajouter` `bot-retirer` | Gérer le serveur | Autorisation du compte Twitch, récompense « Vrai viewer », crédits de live |
 | `/roles ajouter` `retirer` `liste` `panel` | Gérer les rôles | Rôles à boutons |
 | `/warn` `warns` `unwarn` `clearwarns` | Exclure des membres | Avertissements |
 | `/timeout` `untimeout` | Exclure des membres | Exclusion temporaire (`10m`, `2h`, `1j`, `1h30m`) |
@@ -122,9 +125,34 @@ Les logs doivent contenir `commandes synchronisées` puis `Connecté en tant que
 4. Rôles à boutons : `/roles ajouter` pour chaque rôle, puis `/roles panel`. Après une modification de la liste, supprimer l'ancien message et republier le panneau.
 5. Rangs : `/config echelle` crée les 10 rôles (Débutant 10, Actif 20, Superactif 25, Hyperactif 30, No life 40, Reclus 50, Ermite 60, Empereur 70, Ambassadeur 80, Boss final 90). Placer ensuite ces rôles sous celui du bot, puis `/xp synchroniser`. Palier isolé : `/config niveau-role`. Garder tous les rangs au lieu du plus haut : `/config niveau-mode cumuler`.
 6. `/twitch test` (aperçu sans ping, supprimé après 60 s) et `/twitch statut`.
-7. `/config verifier` liste les problèmes restants. À relancer après chaque changement important.
+7. Crédits et récompense : voir la section suivante.
+8. `/config verifier` liste les problèmes restants. À relancer après chaque changement important.
 
 L'intégration Twitch native de Discord (*Intégrations → Twitch*) attribue déjà un rôle aux abonnés : le bot ne s'en charge pas.
+
+### 8. Événements Twitch : crédits et récompense « Vrai viewer »
+
+Ces deux fonctions agissent au nom de ta chaîne : le bot doit y être autorisé **une fois**.
+
+1. `/stream autoriser` affiche un lien. L'ouvrir avec le compte de la chaîne, cliquer sur *Autoriser*.
+2. Le navigateur ouvre ensuite `https://localhost/?code=...` et affiche une erreur : normal. Copier l'adresse complète.
+3. `/stream autoriser code:<adresse copiée>`. Le jeton est conservé dans `data/` et renouvelé automatiquement. `/stream statut` doit afficher 8 abonnements actifs sur 9 ou 9 sur 9.
+
+Le redirect de l'application Twitch doit être exactement `https://localhost` (étape 2).
+
+**Crédits**
+- **Page pour OBS** : le bot sert la page de crédits sur le port 8080 (`compose.yml`). `/stream lien` donne l'adresse : `http://ADRESSE-DU-VPS:8080/credits/<secret>`. Dans OBS : source *Navigateur*, cette adresse, 1920×1080, et cocher **« Actualiser le navigateur quand la scène devient active »**. À chaque affichage de la scène de fin, la page se recharge avec les données du live en cours (relevé des connectés au chat inclus) et défile. Hors live, elle montre le dernier live.
+- **Port à ouvrir** : sur le VPS, si un pare-feu est actif, `sudo ufw allow 8080/tcp`, et dans l'interface de l'hébergeur si elle a son propre pare-feu. L'adresse contient un secret et ne montre que des pseudos Twitch publics. `/stream lien regenerer:True` change le secret. Pour désactiver la page : retirer le bloc `ports` de `compose.yml`.
+- **Archive** (facultatif) : `/config salon` → *Crédits de fin de live*. Après chaque live, le bot y dépose le fichier `credits-AAAA-MM-JJ.html`. Sans ce réglage, rien n'est envoyé.
+- `/stream credits` renvoie en fichier la page du live en cours ou du dernier live. Les données sont gardées 30 jours.
+- Rubriques : abonnés (avec ancienneté), donateurs d'abonnements, bits, raids, nouveaux followers, personnes ayant écrit, silencieux. Les messages commençant par `!` ne comptent pas. Par défaut, les silencieux ne sont pas nommés : une ligne « Merci aux N personnes de l'ombre » (option « Nommer les personnes de l'ombre » dans l'éditeur). Ceux déjà remerciés dans une autre rubrique (abonnés, followers...) ne comptent pas.
+- `/stream bot-ajouter pseudo` exclut un compte de plus (Nightbot, StreamElements et d'autres sont exclus par défaut, voir `/stream bots`). La liste s'applique aussi aux crédits déjà enregistrés.
+- Style : les couleurs, la police et le fond sont des variables en haut du fichier HTML. La vitesse de défilement est la constante `SPEED` en bas. Les spectateurs non connectés à Twitch ne sont pas visibles dans la liste du chat. Si le live plante et reprend longtemps après, Twitch peut le compter comme un nouveau live.
+
+**Récompense « Vrai viewer »**
+1. Créer le rôle, puis `/config role` → *Vrai viewer* (rôle du bot au-dessus).
+2. `/stream recompense prix:5000` crée la récompense dans Twitch (la relancer avec un autre prix pour le modifier). Elle demande un texte : le pseudo Discord (nom d'utilisateur) du viewer.
+3. À chaque utilisation, le bot cherche le membre, donne le rôle, valide la récompense et écrit dans le salon de logs. Pseudo introuvable, ambigu, vide, ou rôle déjà possédé : points remboursés. Rôle non configuré ou non attribuable : la demande reste en attente dans Twitch.
 
 ## Comportement
 
@@ -148,6 +176,23 @@ Un push sur `main` déclenche :
 4. `docker compose up -d --build --force-recreate`, puis l'attente (90 s max) de `Connecté en tant que` dans les logs. En cas d'échec : restauration de la version précédente, reconstruction, et job en échec.
 
 Les pull requests et les autres branches ne sont que testées.
+
+
+#### Personnaliser les crédits
+
+`/stream lien` donne aussi l'adresse de l'éditeur : `http://ADRESSE-DU-VPS:8080/credits/<jeton>/editor`. Même jeton secret que la page OBS (404 sinon), pas de mot de passe.
+
+- Couleurs (principale, abonnés, texte, fond transparent/uni/dégradé, ombre), police (piles système, aucune ressource externe), taille, titres.
+- Défilement : vitesse, délai, fin (sortie ou arrêt sur le dernier écran), boucle.
+- Mise en page : alignement, largeur, 1 à 4 colonnes.
+- Contenu : rubriques activables, renommables, réordonnables ; ancienneté des abonnés ; tri du chat ; silencieux nommés ou groupés.
+- Textes : titre, ligne méta, mot de fin, formulations « personnes de l'ombre » (`{n}` = nombre).
+- Deux modèles : **Modèle 1 · Verre** (titre large, cartes « top du chat » avec le nombre de messages, pastilles pour les autres, abonnés, followers…, fondu haut et bas) et **Modèle 2 · Classique** (texte seul). Les deux sont réglables : cartes (nombre, colonnes, couleur, opacité, arrondi, icône), fond, fondu, etc.
+- Préréglages fournis (les deux modèles, Clair, Chaleureux, Minimal, Néon) et jusqu'à 20 préréglages perso ; bouton Réinitialiser ; aperçu 1920×1080 sur données fictives (fixe ou en lecture).
+
+Le flou de l'image derrière les crédits se règle dans OBS (filtre « Flou gaussien » sur la caméra ou le jeu, placé sous la source navigateur) : la page reste transparente.
+
+Le style est enregistré en base (`credits.style`) et s'applique à la page OBS, à l'archive et à `/stream credits`. Toutes les valeurs sont validées côté bot (couleurs hexadécimales, nombres bornés, listes fermées, textes échappés).
 
 ### Mise en place
 
@@ -243,6 +288,7 @@ Le dépôt contient tout, sauf `.env` et `data/`.
 | Commandes `/` absentes | Vérifier `GUILD_ID` et le scope `applications.commands` de l'invitation, recréer le conteneur, recharger Discord (`Ctrl+R`). |
 | Pas d'annonce de live | `/twitch statut` puis `/config verifier` : salon non défini ou permissions manquantes dans ce salon. |
 | Annonce sans notification | Le bot n'a pas « Mentionner @everyone » dans le salon d'annonces (étape 7.2). |
+| Pas de crédits ni de récompense | `/stream statut` : bot non autorisé, droits manquants ou abonnements refusés. Refaire `/stream autoriser`. |
 | Rôle non attribué | Le rôle du bot doit être au-dessus du rôle visé (étape 1.4). |
 | `Authentification Twitch refusée` | `TWITCH_CLIENT_ID` ou `TWITCH_CLIENT_SECRET` incorrect. |
 | `Chaîne Twitch introuvable` | `TWITCH_CHANNEL` incorrect. |
@@ -258,6 +304,9 @@ bot.py              point d'entrée
 config.py           lecture du .env, seuils réglables
 database.py         base SQLite
 utils.py            fonctions communes
+twitch_user.py      autorisation du compte Twitch (jeton, renouvellement)
+credits.py          tri des données d'un live et page HTML des crédits
+credits_editor.py   page de personnalisation des crédits (éditeur et aperçu)
 cogs/               une fonctionnalité par fichier
 tests/              tests automatiques (python tests/test_bot.py, bash tests/test_deploy.sh)
 deploy/             scripts de déploiement (préparation du VPS, sauvegarde, reconstruction, retour arrière)

@@ -21,17 +21,20 @@ CHANNEL_LABELS = {
     "idees": "Idées (/idee)",
     "joueurs": "Recherche de joueurs",
     "niveaux": "Montées de niveau",
+    "credits": "Crédits de fin de live (réservé au staff)",
 }
 
 ROLE_LABELS = {
     "auto": "Rôle d'arrivée (donné aux nouveaux)",
     "habitue": "Habitué (a le droit de poster des liens)",
     "joueurs": "Ping « recherche de joueurs »",
+    "vrai_viewer": "Vrai viewer (récompense de points de chaîne)",
 }
 
 # Permissions supplémentaires que le bot doit avoir dans certains salons
 CHANNEL_EXTRA_PERMS = {
     "annonces": {"mention_everyone": "mentionner @everyone", "manage_messages": "supprimer l'annonce (Gérer les messages)"},
+    "credits": {"attach_files": "envoyer des fichiers"},
     "idees": {"add_reactions": "ajouter des réactions", "create_public_threads": "créer des fils"},
 }
 

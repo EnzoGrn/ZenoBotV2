@@ -13,6 +13,10 @@ from utils import utcnow
 
 log = logging.getLogger(__name__)
 
+
+def _now() -> str:
+    return utcnow().isoformat(timespec="seconds")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -63,6 +67,26 @@ CREATE TABLE IF NOT EXISTS lfg_players (
     user_id    INTEGER NOT NULL,
     PRIMARY KEY (message_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS stream_chatters (
+    stream_id  TEXT NOT NULL,
+    login      TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    messages   INTEGER NOT NULL DEFAULT 0,
+    present    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (stream_id, login)
+);
+CREATE TABLE IF NOT EXISTS stream_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    stream_id  TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    login      TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    amount     INTEGER NOT NULL DEFAULT 0,
+    detail     TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stream_events_stream ON stream_events (stream_id);
 """
 
 
@@ -321,3 +345,44 @@ class Database:
 
     async def lfg_expired(self, cutoff_iso: str) -> list[aiosqlite.Row]:
         return await self.fetchall("SELECT * FROM lfg WHERE closed = 0 AND created_at < ?", (cutoff_iso,))
+
+    # ------------------------------------------------------------------ données d'un live (crédits)
+
+    async def stream_chat_message(self, stream_id: str, login: str, name: str) -> None:
+        await self.execute(
+            "INSERT INTO stream_chatters (stream_id, login, name, messages, present, created_at) VALUES (?, ?, ?, 1, 0, ?) "
+            "ON CONFLICT(stream_id, login) DO UPDATE SET messages = messages + 1, name = excluded.name",
+            (stream_id, login, name, _now()),
+        )
+
+    async def stream_mark_present(self, stream_id: str, people: Sequence[tuple[str, str]]) -> None:
+        now = _now()
+        await self.conn.executemany(
+            "INSERT INTO stream_chatters (stream_id, login, name, messages, present, created_at) VALUES (?, ?, ?, 0, 1, ?) "
+            "ON CONFLICT(stream_id, login) DO UPDATE SET present = 1",
+            [(stream_id, login, name, now) for login, name in people],
+        )
+        await self.conn.commit()
+
+    async def stream_add_event(
+        self, stream_id: str, kind: str, login: str, name: str, amount: int = 0, detail: str | None = None
+    ) -> None:
+        await self.execute(
+            "INSERT INTO stream_events (stream_id, kind, login, name, amount, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (stream_id, kind, login, name, amount, detail, _now()),
+        )
+
+    async def stream_chatters(self, stream_id: str) -> list[aiosqlite.Row]:
+        return await self.fetchall(
+            "SELECT login, name, messages, present FROM stream_chatters WHERE stream_id = ? ORDER BY messages DESC, login",
+            (stream_id,),
+        )
+
+    async def stream_events(self, stream_id: str) -> list[aiosqlite.Row]:
+        return await self.fetchall(
+            "SELECT kind, login, name, amount, detail FROM stream_events WHERE stream_id = ? ORDER BY id", (stream_id,)
+        )
+
+    async def stream_purge(self, cutoff_iso: str) -> None:
+        await self.execute("DELETE FROM stream_chatters WHERE created_at < ?", (cutoff_iso,))
+        await self.execute("DELETE FROM stream_events WHERE created_at < ?", (cutoff_iso,))

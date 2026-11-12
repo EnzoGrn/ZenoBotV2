@@ -30,7 +30,9 @@ EXTENSIONS = (
     "cogs.levels",
     "cogs.community",
     "cogs.twitch",
+    "cogs.streamevents",
 )
+TWITCH_EXTENSIONS = ("cogs.twitch", "cogs.streamevents")
 
 
 async def reply_error(interaction: discord.Interaction, message: str) -> None:
@@ -99,8 +101,8 @@ class ZenoBot(commands.Bot):
     async def setup_hook(self) -> None:
         await self.db.connect()
         for extension in EXTENSIONS:
-            if extension == "cogs.twitch" and not self.settings.twitch_enabled:
-                log.warning("Clés Twitch absentes : annonces de live désactivées.")
+            if extension in TWITCH_EXTENSIONS and not self.settings.twitch_enabled:
+                log.warning("Clés Twitch absentes : annonces de live, crédits et récompense désactivés (%s).", extension)
                 continue
             await self.load_extension(extension)
 

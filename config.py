@@ -65,6 +65,27 @@ TWITCH_POLL_SECONDS = 60            # fréquence de vérification du live
 TWITCH_OFFLINE_GRACE = 3            # vérifications consécutives « hors-ligne » avant de clôturer l'annonce
 TWITCH_RESUME_WINDOW_MINUTES = 10   # si le live reprend dans ce délai, on réutilise la même annonce (pas de nouveau ping)
 
+# --- Twitch : autorisation de ton compte, événements en direct, crédits ---
+TWITCH_REDIRECT_URI = "https://localhost"   # doit être identique à l'« OAuth Redirect URL » de l'application Twitch
+TWITCH_USER_SCOPES = (
+    "user:read:chat",               # lire le chat (qui écrit)
+    "moderator:read:chatters",      # liste des personnes connectées au chat (les silencieux)
+    "channel:read:subscriptions",   # abonnements
+    "bits:read",                    # bits
+    "moderator:read:followers",     # nouveaux followers
+    "channel:read:redemptions",     # points de chaîne dépensés
+    "channel:manage:redemptions",   # créer la récompense, la valider ou la rembourser
+)
+EVENTSUB_WS_URL = "wss://eventsub.wss.twitch.tv/ws"
+CHATTERS_POLL_SECONDS = 60          # fréquence de relevé des personnes connectées au chat
+CREDITS_WEB_PORT = 8080            # port de la page de crédits lue par OBS (à ouvrir sur le VPS, voir le README)
+CREDITS_RETENTION_DAYS = 30         # durée de conservation des données d'un live (pour regénérer les crédits)
+# Comptes à ne jamais remercier dans les crédits (on peut en ajouter avec /stream bot-ajouter)
+DEFAULT_BOTS = (
+    "nightbot", "streamelements", "streamlabs", "moobot", "fossabot", "wizebot", "sery_bot",
+    "soundalerts", "restreambot", "commanderroot", "anotherttvviewer", "lurxx", "streamfahrer",
+)
+
 # --- Niveaux / XP ---
 XP_MIN = 15
 XP_MAX = 25

@@ -290,6 +290,12 @@ class Twitch(commands.Cog):
         """Le live est fini : l'annonce (et son ping) est supprimée."""
         if not self.state.get("stream_id"):
             return
+        ended = {
+            "stream_id": self.state["stream_id"],
+            "title": self.state.get("title", ""),
+            "games": list(self.state.get("games") or []),
+            "started_at": self.state.get("started_at"),
+        }
         channel = self.bot.get_channel(self.state.get("channel_id") or 0)
         if isinstance(channel, discord.TextChannel) and self.state.get("message_id"):
             try:
@@ -302,6 +308,12 @@ class Twitch(commands.Cog):
         self._offline_streak = 0
         await self._save_state()
         log.info("Live terminé, annonce supprimée.")
+        events = self.bot.get_cog("StreamEvents")
+        if events is not None:
+            try:
+                await events.stream_ended(ended["stream_id"], ended)  # type: ignore[attr-defined]
+            except Exception:
+                log.exception("Erreur pendant la génération des crédits")
 
     # ------------------------------------------------------------------ commandes
 

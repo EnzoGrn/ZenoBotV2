@@ -28,7 +28,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Vérifier la syntaxe
-        run: python -m compileall -q bot.py config.py database.py utils.py cogs
+        run: python -m compileall -q bot.py config.py database.py utils.py twitch_user.py credits.py credits_editor.py cogs
 
       - name: Tests du bot
         run: python tests/test_bot.py
@@ -48,7 +48,7 @@ jobs:
         run: |
           docker run --rm --read-only --tmpfs /tmp --cap-drop ALL \
             --security-opt no-new-privileges:true \
-            zenobot:ci python -c "import bot, cogs.admin, cogs.twitch, cogs.moderation; print('image ok')"
+            zenobot:ci python -c "import bot, credits, credits_editor, twitch_user, cogs.admin, cogs.twitch, cogs.streamevents, cogs.moderation; print('image ok')"
 
   deploy:
     name: Déploiement sur le VPS
