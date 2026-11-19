@@ -20,7 +20,7 @@ CHANNEL_LABELS = {
     "logs": "Logs du serveur (modération)",
     "idees": "Idées (/idee)",
     "joueurs": "Recherche de joueurs",
-    "niveaux": "Montées de niveau",
+    "niveaux": "Montées de niveau (secours si le salon du message est inaccessible)",
     "credits": "Crédits de fin de live (réservé au staff)",
 }
 

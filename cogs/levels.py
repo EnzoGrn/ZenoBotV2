@@ -117,12 +117,18 @@ class Levels(commands.Cog):
             return
         role = member.guild.get_role(crossed[-1]["role_id"])
         rank_name = role.name if role else f"niveau {crossed[-1]['level']}"
-        channel = self.bot.channel_setting("niveaux") or fallback_channel
+        # Annonce là où la personne vient de parler (pour les « gg » des autres) ; salon « niveaux » en secours
         text = f"🎉 {member.mention} passe **{rank_name}** (niveau {level}) !"
-        try:
-            await channel.send(text, allowed_mentions=discord.AllowedMentions(users=[member]))
-        except discord.HTTPException:
-            pass
+        mentions = discord.AllowedMentions(users=[member])
+        fallback = self.bot.channel_setting("niveaux")
+        for channel in (fallback_channel, fallback):
+            if channel is None:
+                continue
+            try:
+                await channel.send(text, allowed_mentions=mentions)
+                return
+            except discord.HTTPException:
+                continue
 
     async def sync_rewards(self, member: discord.Member, level: int) -> tuple[list[discord.Role], list[discord.Role]]:
         """Aligne les rôles de récompense du membre sur son niveau. Renvoie (rôles donnés, rôles retirés).

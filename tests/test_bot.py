@@ -660,6 +660,26 @@ async def test_extras(tmp: Path):
     assert level_from_xp((await bot.db.get_xp(21))["xp"]).level == 3 and ch2.sent == []
     ok("niveaux : seuls les changements de rang sont annoncés")
 
+    # l'annonce va dans le salon où la personne a parlé ; le salon « niveaux » ne sert que de secours
+    fb = FakeTextChannel()
+    real_cs = bot.channel_setting
+    bot.channel_setting = lambda k: fb if k == "niveaux" else None
+    mm3a = FakeMember(23); mm3a.guild = guild
+    async def _aa(r, reason=None): mm3a._roles.append(r)
+    mm3a.add_roles = _aa
+    here = FakeTextChannel()
+    await lv.award_xp(FakeMessage(mm3a, "un vrai message", here))
+    assert here.sent and "Débutant" in here.sent[0] and fb.sent == []                 # annoncé là où il a parlé
+    mm3b = FakeMember(24); mm3b.guild = guild
+    async def _ab(r, reason=None): mm3b._roles.append(r)
+    mm3b.add_roles = _ab
+    class Locked(FakeTextChannel):
+        async def send(self, content=None, **kw): raise discord.Forbidden(SimpleNamespace(status=403, reason="x"), "no")
+    await lv.award_xp(FakeMessage(mm3b, "un vrai message", Locked()))
+    assert fb.sent and "Débutant" in fb.sent[0]                                        # salon inaccessible : secours
+    bot.channel_setting = real_cs
+    ok("niveaux : annonce dans le salon du message, salon « niveaux » en secours")
+
     # /rank : rang, niveau, prochain rang
     await bot.db.set_reward(5, 901)
     guild.get_role = lambda rid: {900: role, 901: SimpleNamespace(id=901, name="Actif", is_assignable=lambda: True)}.get(rid)
