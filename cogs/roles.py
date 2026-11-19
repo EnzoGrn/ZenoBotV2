@@ -31,6 +31,17 @@ DANGEROUS_PERMS = discord.Permissions(
 )
 
 CUSTOM_EMOJI_RE = re.compile(r"^<a?:\w+:\d+>$")
+MESSAGE_LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)")
+
+# Règlement : réagir au message des règles donne un rôle (réglages enregistrés en base)
+RULES_MESSAGE = "rules.message"   # « salon:message »
+RULES_EMOJI = "rules.emoji"
+RULES_ROLE = "rules.role"
+
+
+def norm_emoji(value: object) -> str:
+    """Forme comparable d'un emoji (sans le sélecteur de variante des emojis Unicode)."""
+    return str(value).replace("\ufe0f", "").strip()
 
 
 class SelfRoleButton(discord.ui.DynamicItem[discord.ui.Button], template=r"selfrole:(?P<role_id>[0-9]+)"):
@@ -187,6 +198,120 @@ class Roles(commands.Cog):
             await interaction.response.send_message(f"❌ Je ne peux pas écrire dans {salon.mention}.", ephemeral=True)
             return
         await interaction.response.send_message(f"✅ Panneau publié : {message.jump_url}", ephemeral=True)
+
+    # ------------------------------------------------------------------ règlement : réaction = rôle
+
+    def rules_config(self) -> tuple[int, int, str, int] | None:
+        """(salon, message, emoji, rôle) du règlement, ou None s'il n'est pas configuré."""
+        raw = self.bot.db.setting(RULES_MESSAGE)
+        role_id = self.bot.db.setting(RULES_ROLE)
+        if not raw or not role_id or ":" not in raw:
+            return None
+        channel_id, message_id = raw.split(":", 1)
+        return int(channel_id), int(message_id), self.bot.db.setting(RULES_EMOJI) or "✅", int(role_id)
+
+    @roles_group.command(name="regles", description="Réagir au message du règlement donne un rôle")
+    @app_commands.describe(
+        lien="Lien du message du règlement (clic droit sur le message → Copier le lien)",
+        role="Rôle donné (par exemple Membre)",
+        emoji="Emoji à cliquer (✅ par défaut)",
+    )
+    async def roles_rules(
+        self,
+        interaction: discord.Interaction,
+        lien: str,
+        role: discord.Role,
+        emoji: app_commands.Range[str, 1, 64] = "✅",
+    ) -> None:
+        guild = interaction.guild
+        assert guild is not None
+        match = MESSAGE_LINK_RE.search(lien)
+        if not match or int(match[1]) != guild.id:
+            await interaction.response.send_message("❌ Lien invalide : copie le lien du message (clic droit → Copier le lien du message) sur ce serveur.", ephemeral=True)
+            return
+        if not (CUSTOM_EMOJI_RE.match(emoji) or not emoji.isascii()):
+            await interaction.response.send_message("❌ Emoji invalide : utilise un emoji (ex. ✅) ou un emoji du serveur.", ephemeral=True)
+            return
+        if role.is_default() or role.managed:
+            await interaction.response.send_message("❌ Ce rôle ne peut pas être utilisé.", ephemeral=True)
+            return
+        if role.permissions.value & DANGEROUS_PERMS.value:
+            await interaction.response.send_message("❌ Ce rôle donne des permissions de modération ou d'administration : je refuse de le donner automatiquement.", ephemeral=True)
+            return
+        if not role.is_assignable():
+            await interaction.response.send_message("❌ Je ne peux pas attribuer ce rôle : place mon rôle AU-DESSUS de lui dans la liste des rôles du serveur.", ephemeral=True)
+            return
+
+        channel = guild.get_channel(int(match[2]))
+        try:
+            message = await channel.fetch_message(int(match[3])) if channel else None  # type: ignore[union-attr]
+            if message is None:
+                raise discord.NotFound(None, "salon introuvable")  # type: ignore[arg-type]
+            await message.add_reaction(discord.PartialEmoji.from_str(emoji))
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Je n'ai pas le droit de lire ce salon ou d'y ajouter des réactions.", ephemeral=True)
+            return
+        except discord.HTTPException:
+            await interaction.response.send_message("❌ Message introuvable (ou emoji refusé par Discord).", ephemeral=True)
+            return
+
+        await self.bot.db.set_setting(RULES_MESSAGE, f"{int(match[2])}:{int(match[3])}")
+        await self.bot.db.set_setting(RULES_EMOJI, emoji)
+        await self.bot.db.set_setting(RULES_ROLE, str(role.id))
+        await interaction.response.send_message(
+            f"✅ Réagir avec {emoji} à [ce message]({message.jump_url}) donne {role.mention} (retirer la réaction retire le rôle). "
+            "Les autres réactions n'ont aucun effet.",
+            ephemeral=True,
+        )
+
+    @roles_group.command(name="regles-retirer", description="Désactive le rôle donné par réaction au règlement")
+    async def roles_rules_off(self, interaction: discord.Interaction) -> None:
+        had = self.rules_config() is not None
+        for key in (RULES_MESSAGE, RULES_EMOJI, RULES_ROLE):
+            await self.bot.db.delete_setting(key)
+        await interaction.response.send_message("✅ Désactivé." if had else "Rien n'était configuré.", ephemeral=True)
+
+    def _rules_match(self, payload: discord.RawReactionActionEvent) -> tuple[discord.Guild, discord.Role] | None:
+        conf = self.rules_config()
+        if conf is None or payload.guild_id is None or payload.message_id != conf[1] or payload.channel_id != conf[0]:
+            return None
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is None or not self.bot.is_home(guild):  # type: ignore[attr-defined]
+            return None
+        if norm_emoji(payload.emoji) != norm_emoji(conf[2]):
+            return None
+        role = guild.get_role(conf[3])
+        return (guild, role) if role is not None else None
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        found = self._rules_match(payload)
+        member = payload.member
+        if found is None or member is None or member.bot:
+            return
+        _, role = found
+        if not role.is_assignable():
+            log.warning("Règlement : je ne peux pas attribuer %s (mon rôle est trop bas ?)", role)
+            return
+        try:
+            if role not in member.roles:
+                await member.add_roles(role, reason="Règlement accepté")
+        except discord.HTTPException as exc:
+            log.warning("Règlement : impossible de donner le rôle à %s : %s", member, exc)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        found = self._rules_match(payload)
+        if found is None:
+            return
+        guild, role = found
+        member = guild.get_member(payload.user_id)
+        if member is None or member.bot or role not in member.roles or not role.is_assignable():
+            return
+        try:
+            await member.remove_roles(role, reason="Réaction au règlement retirée")
+        except discord.HTTPException as exc:
+            log.warning("Règlement : impossible de retirer le rôle à %s : %s", member, exc)
 
 
 async def setup(bot: commands.Bot) -> None:

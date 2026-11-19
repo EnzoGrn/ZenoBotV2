@@ -27,6 +27,7 @@ Droits par défaut, modifiables dans *Paramètres du serveur → Intégrations*.
 | `/twitch statut` `test` | Gérer le serveur | État de la connexion Twitch, aperçu d'annonce |
 | `/stream autoriser` `statut` `recompense` `lien` `credits` `bots` `bot-ajouter` `bot-retirer` | Gérer le serveur | Autorisation du compte Twitch, récompense « Vrai viewer », crédits de live |
 | `/roles ajouter` `retirer` `liste` `panel` | Gérer les rôles | Rôles à boutons |
+| `/roles regles` `regles-retirer` | Gérer les rôles | Réagir au message du règlement donne un rôle |
 | `/warn` `warns` `unwarn` `clearwarns` | Exclure des membres | Avertissements |
 | `/timeout` `untimeout` | Exclure des membres | Exclusion temporaire (`10m`, `2h`, `1j`, `1h30m`) |
 | `/kick` `ban` `unban` | Expulser / Bannir | Sanctions |
@@ -123,6 +124,7 @@ Les logs doivent contenir `commandes synchronisées` puis `Connecté en tant que
 2. Donner au bot, dans le salon d'annonces, les permissions « Mentionner @everyone, @here et tous les rôles » et « Gérer les messages » (`/config verifier` contrôle).
 3. `/config role` : *Rôle d'arrivée* et *Habitué* (autorisé à poster des liens).
 4. Rôles à boutons : `/roles ajouter` pour chaque rôle, puis `/roles panel`. Après une modification de la liste, supprimer l'ancien message et republier le panneau.
+   Règlement : `/roles regles lien:<lien du message> role:@Membre` (emoji ✅ par défaut). Réagir donne le rôle, retirer la réaction le retire. Les autres réactions sont ignorées.
 5. Rangs : `/config echelle` crée les 10 rôles (Débutant 10, Actif 20, Superactif 25, Hyperactif 30, No life 40, Reclus 50, Ermite 60, Empereur 70, Ambassadeur 80, Boss final 90). Placer ensuite ces rôles sous celui du bot, puis `/xp synchroniser`. Palier isolé : `/config niveau-role`. Garder tous les rangs au lieu du plus haut : `/config niveau-mode cumuler`.
 6. `/twitch test` (aperçu sans ping, supprimé après 60 s) et `/twitch statut`.
 7. Crédits et récompense : voir la section suivante.

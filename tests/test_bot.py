@@ -738,6 +738,55 @@ async def test_extras(tmp: Path):
     await bot.db.delete_setting("levels.mode")
     ok("rangs : un seul à la fois, abaissement, rien avant le niveau 10, mode cumuler")
 
+    # règlement : réagir au message donne le rôle de départ (Débutant), le retirer le retire
+    deb = SimpleNamespace(id=2000, name="Membre", mention="<@&2000>", managed=False, is_assignable=lambda: True,
+                          is_default=lambda: False, permissions=discord.Permissions(send_messages=True))
+    act = SimpleNamespace(id=1020, name="Actif", is_assignable=lambda: True)
+    rules_msg = SimpleNamespace(jump_url="https://discord.com/channels/5/7/8", reacted=[])
+    async def add_reaction(e): rules_msg.reacted.append(str(e))
+    rules_msg.add_reaction = add_reaction
+    async def fetch_message(mid): return rules_msg
+    rules_chan = SimpleNamespace(fetch_message=fetch_message)
+    members: dict[int, SimpleNamespace] = {}
+    rg = SimpleNamespace(id=5, get_role=lambda rid: {2000: deb, 1020: act}.get(rid), get_channel=lambda cid: rules_chan if cid == 7 else None,
+                         get_member=lambda uid: members.get(uid))
+    def mk(uid):
+        m = SimpleNamespace(id=uid, bot=False, roles=[], guild=rg)
+        async def _a(r, reason=None): m.roles.append(r)
+        async def _r(r, reason=None): m.roles.remove(r)
+        m.add_roles, m.remove_roles = _a, _r
+        members[uid] = m
+        return m
+    bot.get_guild = lambda gid: rg if gid == 5 else None
+    bot.is_home = lambda g: True
+    bot.get_cog = lambda name: lv if name == "Levels" else None
+    rc = roles.Roles(bot)
+    ev = lambda m, mid=8, emoji="✅", ch=7: SimpleNamespace(guild_id=5, channel_id=ch, message_id=mid, emoji=emoji, member=m, user_id=m.id)
+
+    bad = FakeInteraction(FakeMember(1, staff=True)); bad.guild = rg
+    await rc.roles_rules.callback(rc, bad, "pas un lien", deb, "✅")
+    assert "Lien invalide" in bad.response.calls[0][1][0] and rc.rules_config() is None
+    good = FakeInteraction(FakeMember(1, staff=True)); good.guild = rg
+    await rc.roles_rules.callback(rc, good, "https://discord.com/channels/5/7/8", deb, "✅")
+    assert "<@&2000>" in good.response.calls[0][1][0]
+    assert rules_msg.reacted == ["✅"] and rc.rules_config() == (7, 8, "✅", 2000)
+    ok("règlement : commande (lien, rôle, réaction posée par le bot)")
+
+    a = mk(60)
+    await rc.on_raw_reaction_add(ev(a))
+    assert [r.name for r in a.roles] == ["Membre"]
+    await lv.sync_rewards(a, 3)                                                   # les rangs de niveau ne touchent pas à ce rôle
+    assert [r.name for r in a.roles] == ["Membre"]
+    b = mk(61); await rc.on_raw_reaction_add(ev(b, emoji="👍")); assert b.roles == []          # autre réaction : rien
+    await rc.on_raw_reaction_add(ev(b, mid=99)); assert b.roles == []                          # autre message : rien
+    bt = mk(62); bt.bot = True; await rc.on_raw_reaction_add(ev(bt)); assert bt.roles == []     # bots ignorés
+    await rc.on_raw_reaction_add(ev(b, emoji="✅\ufe0f")); assert [r.name for r in b.roles] == ["Membre"]   # variante d'emoji
+    await rc.on_raw_reaction_remove(ev(b)); assert b.roles == []                              # réaction retirée : rôle retiré
+    await rc.on_raw_reaction_remove(ev(b)); assert b.roles == []                              # déjà retiré : rien
+    off = FakeInteraction(FakeMember(1, staff=True)); await rc.roles_rules_off.callback(rc, off)
+    e = mk(65); await rc.on_raw_reaction_add(ev(e)); assert e.roles == [] and rc.rules_config() is None
+    ok("règlement : réaction → rôle, autres réactions et bots ignorés, retrait, désactivation")
+
     # /xp réservé au staff, /rank public
     cmd_xp, cmd_niv = SimpleNamespace(qualified_name="xp reset"), SimpleNamespace(qualified_name="rank")
     plain = FakeMember(30)
